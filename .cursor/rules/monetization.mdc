@@ -1,0 +1,511 @@
+---
+globs: src/coins/**/*.*, src/users/**/*.*, src/squads/**/*.*, src/competitions/**/*.*, src/media/**/*.*
+alwaysApply: false
+---
+
+# MONETIZATION CURSOR RULES
+
+## DESCRIPTION
+
+This document provides monetization context for SQUADZ app development. Covers subscription tier logic, virtual currency flow, platform payment constraints, fee calculation rules, and financial validation patterns. Use this to understand monetization business rules when building payment features, tier-gated functionality, coin transactions, and squad financial operations.
+
+**Core Concepts:**
+- Three-tier subscription system (Basic/Pro/Premium) with progressive feature unlocks
+- Dual wallet economy (player coins + squad banks) with transaction ledger
+- Platform-mandated IAP for all digital goods (Apple/Google policy requirement)
+- Dynamic fee calculation based on player tier, transfer status, and squad state
+- Subscription lifecycle states affecting feature access
+
+---
+
+## QUICK REFERENCE
+
+### Validation Priority Order
+
+**Before ANY coin operation, check in this order:**
+1. **Transaction uniqueness** - Check transaction_id not already processed (idempotency)
+2. **Authentication** - Verify user/squad ownership and permissions
+3. **Tier limits** - Validate action allowed for user's subscription tier
+4. **Balance sufficiency** - Ensure wallet has required funds
+5. **Wallet locking** - Lock wallets in consistent order (player first, squad second)
+6. **Execute atomically** - Wrap all changes in single database transaction
+
+### Common Operation Flows
+
+**Contract Break Flow:**
+```
+1. Get player tier and valuation
+2. Calculate fee: valuation × 1.0 (Basic/Pro) or × 0.5 (Premium)
+3. Check player wallet balance >= fee
+4. Lock player wallet + squad bank (in that order)
+5. In DB transaction:
+   - Deduct fee from player wallet
+   - Credit fee to squad bank
+   - Record transaction in ledger
+   - Terminate contract
+   - Add player to transfer pool as Free Agent
+6. Commit transaction
+```
+
+**Transfer Signing Flow:**
+```
+1. Get player status (Free Agent or Transfer Listed)
+2. Calculate total cost:
+   - Free Agent: 2 coins
+   - Transfer Listed: valuation + 2 coins
+3. Check squad bank balance >= total cost
+4. Lock buying squad bank + selling squad bank (if applicable)
+5. In DB transaction:
+   - Deduct coins from buying squad bank
+   - Credit valuation to selling squad bank (if Transfer Listed)
+   - Credit 2 coins to platform
+   - Record transactions in ledger
+   - Transfer player to new squad
+   - Remove from transfer pool
+6. Commit transaction
+```
+
+**Competition Registration Flow:**
+```
+1. Count Sub-Ineligible players in squad
+2. Calculate cost options:
+   - Option A (per-player): Sub-Ineligible count × 2 coins
+   - Option B (Squad Pass): 6 coins (covers all Sub-Ineligible players)
+3. Present both options to Captain, recommend Squad Pass if Sub-Ineligible count >= 3
+4. Captain chooses payment method
+5. Check squad bank balance >= chosen cost
+6. Lock squad bank
+7. In DB transaction:
+   - Deduct coins from squad bank
+   - Credit coins to platform
+   - Record transaction in ledger
+   - Mark all players as registered for competition
+   - If Squad Pass used: Mark Squad Pass as consumed for this competition
+8. Commit transaction
+```
+
+### Fee Formulas
+
+| Action | Formula | Payment Source |
+|--------|---------|----------------|
+| **Contract Break** | player_valuation × 1.0 (Basic/Pro) or × 0.5 (Premium) | Player wallet → Squad bank |
+| **Free Agent Transfer** | 2 coins (registration only) | Squad bank → Platform |
+| **Transfer Listed Player** | player_valuation + 2 coins | Squad bank → (valuation to old squad + 2 to Platform) |
+| **Sub-Ineligible Registration** | 2 coins per player OR 6 coins Squad Pass | Squad bank → Platform |
+| **Challenge Unlock** | 0 coins (Premium) or 1 coin (Basic/Pro) | Player wallet → Platform |
+| **Late Lineup** | 2 coins | Squad bank → Platform |
+
+### Key Decision Points
+
+**Squad Pass vs Per-Player Fees:**
+- Captain chooses payment method (always their decision)
+- Squad Pass (6 coins flat rate) covers all Sub-Ineligible players
+- Per-player (2 coins each) charges individually
+- **Cost-effective recommendation:** Squad Pass when ≥3 Sub-Ineligible players, per-player when <3
+- System can suggest the cheaper option, but Captain makes final choice
+
+**Player Tier Validation:**
+- Before squad creation → Check current_squads < tier_max_squads
+- Before competition registration → Check active_competitions < tier_max_competitions
+- Before contract break → Calculate fee based on tier (1.0x or 0.5x)
+- Before screenshot upload → Check uploaded_count < tier_max_screenshots
+
+**Transaction Atomicity Rules:**
+- ALWAYS wrap: balance update + transaction record in single DB transaction
+- ALWAYS lock wallets in consistent order: player wallet first, then squad bank
+- NEVER credit coins before verifying receipt with Apple/Google
+- NEVER update balance without recording transaction in ledger
+
+---
+
+## PLATFORM PAYMENT CONSTRAINTS
+
+### Critical Apple & Google Requirements
+
+**All digital goods MUST use platform-native In-App Purchase (IAP):**
+- Subscriptions (recurring feature access)
+- Virtual currency (coins)
+- Feature unlocks (challenges, Squad Pass)
+- Digital consumables
+
+**Alternative payment methods (Stripe, PayPal, etc.) are PROHIBITED for digital goods.** Using them will result in App Store/Play Store rejection.
+
+**What this means for implementation:**
+- Every coin purchase flows through App Store/Google Play
+- Every subscription flows through platform billing
+- Backend receives receipts/purchase tokens to verify purchases
+- Cannot bypass platform's 30% commission (15% for subscriptions after year 1)
+
+### Platform-Specific Considerations
+
+**iOS (StoreKit):**
+- Receipt validation requires shared secret from App Store Connect
+- Sandbox environment needed for testing (separate verification URL)
+- Server-side receipt validation prevents fraud
+- Subscription auto-renewal managed by Apple
+- Webhook notifications via App Store Server Notifications for subscription events
+
+**Android (Google Play Billing):**
+- Purchase validation uses Google Play Developer API
+- Service account credentials required for backend verification
+- **CRITICAL:** Purchases MUST be acknowledged within 3 days or auto-refund
+- Real-Time Developer Notifications (RTDN) for subscription state changes
+- Separate testing via license testing accounts
+
+**Cross-Platform Implications:**
+- User subscribes on iOS → Backend tracks platform
+- Same user logs in on Android → Verify subscription still active on iOS
+- Cannot transfer subscription between platforms (Apple ↔ Google)
+- Must handle subscription verification for original purchase platform
+
+---
+
+## SUBSCRIPTION TIER SYSTEM
+
+### Tier Structure & Pricing
+
+| Tier | Monthly | Annual | Annual Savings |
+|------|---------|--------|----------------|
+| Basic | Free | Free | - |
+| Pro | £5 | £40 | £20 (33% discount) |
+| Premium | £10 | £85 | £35 (29% discount) |
+
+### Feature Gates by Tier
+
+**Squad & Competition Access:**
+- Basic: 1 squad max, 1 competition max
+- Pro: 1 squad max, 2 competitions max
+- Premium: 2 squads max, 3 competitions max
+
+**Financial Benefits:**
+- Basic/Pro: Contract break fee = 100% of player valuation
+- Premium: Contract break fee = 50% of player valuation (50% savings)
+
+**Profile Customization:**
+- Basic: 0 attributes, 0 screenshots, 1 basic player card
+- Pro: 6 attributes, 2 screenshots, 1 Pro card (primary position)
+- Premium: 12 attributes, 4 screenshots, 2 Premium cards (primary + secondary positions)
+
+**Challenge Access:**
+- Basic/Pro: 1 coin per challenge unlock
+- Premium: Unlimited free challenge access
+
+**Transfer Market Visibility:**
+- Basic: Standard placement (bottom of list)
+- Pro: Boosted placement (middle priority)
+- Premium: Priority placement (top of list)
+
+### Validation Points
+
+**Tier-dependent operations require checking limits before execution:**
+- Squad creation → current_squads < tier_max_squads
+- Competition registration → active_competitions < tier_max_competitions
+- Contract break → calculate fee based on tier multiplier (1.0x or 0.5x)
+- Screenshot upload → uploaded_count < tier_max_screenshots
+- Challenge unlock → calculate cost (0 for Premium, 1 coin for Basic/Pro)
+
+Block action and prompt tier upgrade if limit exceeded.
+
+### Subscription State Lifecycle
+
+**State Machine (Canonical Reference):**
+
+| State | Description | Feature Access | Triggers |
+|-------|-------------|----------------|----------|
+| **ACTIVE** | Payment successful, full tier access | All tier features enabled | Successful payment/renewal |
+| **GRACE_PERIOD** | Payment failed, temporary access (3 days) | All tier features enabled | Payment failure |
+| **EXPIRED** | Payment not recovered, downgraded | Basic tier only | Grace period expires OR cancellation period ends |
+| **CANCELLED** | User cancelled, access until period end | All tier features until period_end | User cancels subscription |
+
+**State Transitions:**
+- Payment succeeds → ACTIVE
+- Payment fails → GRACE_PERIOD (3-day window)
+- Grace period expires without recovery → EXPIRED (downgrade to Basic)
+- User cancels → CANCELLED (access until current_period_end) → EXPIRED
+- Payment recovers during grace/cancelled → ACTIVE
+
+**Downgrade Process (EXPIRED):**
+1. Update player tier to Basic
+2. **If exceeds Basic limits:**
+   - 2 squads → force player to choose 1 squad to leave
+   - 2+ competitions → block new registrations until competitions end naturally
+3. **Revert profile customizations:** Remove excess screenshots (keep 0), attributes (keep 0), extra player cards (keep basic only)
+4. **Update feature access:** Challenge unlocks now cost 1 coin, transfer market placement downgraded to Standard
+
+**Special Cases:**
+- **CANCELLED with time remaining:** User retains tier access until current_period_end
+- **GRACE_PERIOD:** User keeps tier access during 3-day window
+- **Premium with 2 squads:** Must choose 1 squad to leave before app access continues
+
+---
+
+## VIRTUAL CURRENCY SYSTEM
+
+### Coin Package Structure
+
+| Package | Price (GBP) | Coins | Use Case |
+|---------|-------------|-------|----------|
+| Small | £5 | 5 | Challenges, late lineup fees |
+| Standard | £22 | 22 | Competition registration (squad of 5) |
+| Medium | £45 | 55 | Multiple registrations |
+| Large | £85 | 115 | Large squad + competitions |
+
+**Package Design Logic:**
+- £22 package covers minimum squad (5 players × 2 coins = 10 coins) + buffer for fees = 22 coins
+- Larger packages provide better value per coin
+- No fractional coins (always whole numbers)
+
+**Coin-Based Purchases:**
+All squad operations use coins from Squad Bank:
+- Player registration fees (2 coins per Sub-Ineligible player)
+- Squad Pass (6 coins - one-time consumable for all Sub-Ineligible players)
+- Transfer fees (2 coins + player valuation if Transfer Listed)
+- Late lineup fees (2 coins)
+
+There are NO squad-level subscription tiers. All squad features are unlocked via coin purchases.
+
+### Dual Wallet System
+
+**Player Wallet:**
+- Personal coin balance
+- Used for: Challenge unlocks (Basic/Pro), contract break fees, personal purchases
+- Replenished via: IAP coin purchases, admin credits, refunds
+
+**Squad Bank:**
+- Shared squad wallet
+- Used for: Player registration fees, transfer fees, Squad Pass, late lineup fees
+- Replenished via: Captain purchases coins specifically for squad, contract break fees (received from leaving players), transfer fees (received from selling Transfer Listed players)
+- Depleted when: Registering players, signing transfers, purchasing Squad Pass, late lineup submissions
+
+**Key Distinction:**
+- Player cannot directly transfer personal coins to Squad Bank
+- Captain purchases coins that go directly to Squad Bank (separate IAP products)
+- Contract break fees flow FROM player wallet TO squad bank
+- Transfer fees flow FROM buying squad bank TO selling squad bank
+
+### Transaction Ledger Concept
+
+**Every coin movement is recorded with:** transaction type, source wallet (FROM), destination wallet (TO), amount, balance before/after, metadata (player/squad/competition IDs, reason), timestamp.
+
+**Purpose:** Provides audit trail for financial operations, detects fraud/balance inconsistencies, supports refund processing, and enables coin flow analytics.
+
+**Idempotency:** Each transaction uses unique ID (transaction_id from Apple/Google) with database UNIQUE constraint to prevent duplicate processing if receipt submitted twice.
+
+---
+
+## FEE CALCULATION RULES
+
+### Competition Registration Fees
+
+**Base Registration Cost:** 0 coins (squad registration itself is free)
+
+**Player Registration System:**
+
+Players become "Sub-Ineligible" when at competition limit:
+- Basic: Sub-Ineligible after 1 competition
+- Pro: Sub-Ineligible after 2 competitions
+- Premium: Never Sub-Ineligible (always free)
+
+**Per-Player Registration Fee:**
+- Premium tier: FREE (always)
+- Basic/Pro NOT Sub-Ineligible: FREE (within competition limit)
+- Basic/Pro Sub-Ineligible: 2 coins each (paid from Squad Bank)
+
+**Squad Pass (Coin-Based Alternative):**
+- **What it is:** One-time consumable purchase (NOT a subscription tier)
+- **Cost:** 6 coins (paid from Squad Bank)
+- **Benefit:** Register ALL Sub-Ineligible players in squad for ONE competition
+- **When to use:** Cost-effective when 3+ Sub-Ineligible players (6 coins < 6+ coins individual)
+- **Limitation:** Single-use per competition registration. Must purchase again for next competition.
+
+**Registration Cost Calculation:**
+```
+For each player in squad:
+  - If Premium: fee = FREE
+  - If active_competitions < tier_max_competitions: fee = FREE
+  - If active_competitions >= tier_max_competitions: player is Sub-Ineligible
+  
+Count Sub-Ineligible players.
+
+Option A (Pay Per-Player):
+  total_cost = (Sub-Ineligible count) × 2 coins
+
+Option B (Use Squad Pass):
+  total_cost = 6 coins (flat rate for all Sub-Ineligible players)
+  
+Recommendation: Use Squad Pass when Sub-Ineligible count >= 3
+```
+
+**Payment Source:** Squad Bank (must have sufficient coin balance)
+
+### Transfer Fees
+
+**Two Player Statuses in Transfer Pool:**
+
+1. **Free Agent:** Player broke contract themselves or has no CompContract
+   - Signing fee: 0 coins
+   - Registration fee: 2 coins
+   - Total cost: 2 coins
+   - Payment destination: 2 coins → Platform
+
+2. **Transfer Listed:** Player placed in pool by CompSquad Captain
+   - Signing fee: Player's full valuation (dynamic 2-12 coins)
+   - Registration fee: 2 coins
+   - Total cost: valuation + 2 coins
+   - Payment destination: valuation → previous squad bank, 2 coins → Platform
+
+**Why different fees:**
+- Free Agent already paid valuation to break contract → no double-charging
+- Transfer Listed has not paid exit fee → buying squad pays it on their behalf
+
+**Validation Requirements:**
+- Buying squad bank must have sufficient balance BEFORE accepting transfer
+- If insufficient, block transfer and notify Captain
+- Transfer is atomic: either complete (coins move + player moves) or fail (no changes)
+
+### Contract Break Fees
+
+**Fee Formula:**
+- Basic/Pro: player_valuation × 100% = full valuation
+- Premium: player_valuation × 50% = half valuation
+
+**Payment Flow:**
+- Deducted from: Player's personal coin balance
+- Credited to: Previous squad's Squad Bank
+- Player cannot break contract if insufficient balance
+
+**Special Cases:**
+- InitContract (NonCompSquad): Always free to break (0 coins)
+- CompContract (CompSquad): Subject to tier-based fee
+- After contract break: Player becomes Free Agent, can sign elsewhere for free (already paid exit fee)
+
+### Late Lineup Submission Fee
+
+**Timeline & Fees:**
+- Standard deadline: 1 hour before match
+- Late submission window: Between 1 hour and 30 minutes before match
+- Late fee: 2 coins (deducted from Squad Bank)
+- Hard deadline: 30 minutes before match (no submission allowed, forfeit)
+
+**Validation:**
+- Check current time vs match scheduled time
+- If in late window: require 2 coins in Squad Bank
+- If past hard deadline: block submission, mark as forfeit
+
+---
+
+## RECEIPT VERIFICATION & SECURITY
+
+### Verification Flow & Requirements
+
+**Flow:**
+1. User purchases via react-native-iap → Platform processes payment
+2. Platform returns receipt/purchase token → App sends to backend
+3. Backend verifies with Apple/Google servers → Credits coins/activates subscription
+
+**Why Verification Matters:**
+Without backend verification, users could forge receipts, replay old purchases, or bypass platform payments entirely. Verification prevents fraud and ensures only legitimate purchases are credited.
+
+**iOS Requirements:**
+- Send receipt_data to Apple's verification endpoint with shared_secret
+- Handle sandbox vs production receipts (different URLs)
+- Check transaction_id hasn't been processed before (idempotency)
+
+**Android Requirements:**
+- Send purchase_token to Google Play Developer API via service account
+- Parse response for purchase state
+- **CRITICAL:** Call acknowledge API within 3 days or Google auto-refunds
+- Check purchase_token hasn't been processed before (idempotency)
+
+**Idempotency Strategy:**
+- Store transaction_id (iOS) or purchase_token (Android) with UNIQUE constraint
+- Before crediting, check if transaction_id exists
+- If exists → reject as duplicate (return success for idempotency)
+- If not exists → process and record
+
+**Error Handling:**
+- Network timeout → retry with exponential backoff, queue for later
+- Invalid receipt → reject purchase, notify user
+- Verification service down → queue for retry, don't credit until verified
+
+---
+
+## SUBSCRIPTION WEBHOOKS & STATE SYNC
+
+### Webhook Event Handling
+
+**Why Webhooks:**
+Platform events (renewals, cancellations, payment failures, refunds) happen outside the app. Webhooks notify backend to update subscription state machine (see Subscription State Lifecycle above).
+
+**Event → State Transition Mapping:**
+
+| Platform Event | State Transition | Additional Actions |
+|----------------|------------------|-------------------|
+| Subscription Renewed | → ACTIVE | Update current_period_end date |
+| Payment Failed | → GRACE_PERIOD | Set grace_period_end = now + 3 days, notify user |
+| Subscription Canceled | → CANCELLED | Set cancel_at_period_end = true, schedule downgrade |
+| Subscription Expired | → EXPIRED | Downgrade to Basic, revoke feature access |
+| Refund Issued | → EXPIRED (if subscription) | Deduct coins (if coin purchase), flag for fraud review |
+
+### Cross-Platform State Sync
+
+**Challenge:** User subscribes on iOS, logs in on Android → Android needs subscription status
+
+**Solution:**
+1. Store original purchase platform (ios/android) in subscriptions table
+2. On cross-platform login, query user's active subscription
+3. Verify subscription still active on original platform (call Apple/Google API)
+4. If active → grant tier access; if expired → downgrade
+
+**Important:** Subscriptions cannot transfer between platforms. User must create new subscription on different platform.
+
+---
+
+## EDGE CASES & ERROR SCENARIOS
+
+### Critical Edge Cases
+
+**1. Duplicate Purchase (Network Retry)**
+- **Scenario:** User purchases, network fails, app retries, sends receipt twice
+- **Prevention:** Backend checks transaction_id uniqueness via UNIQUE constraint. First submission processes, second returns "already processed" (200 OK for idempotency)
+
+**2. Negative Balance After Refund**
+- **Scenario:** User buys 50 coins, spends all 50 on transfers, then refunds purchase
+- **Handling:** Deduct 50 coins → balance becomes -50. Flag account, block coin-spending until positive. Allow negative to avoid blocking platform-mandated refunds. Monitor accounts with >2 refunds in 90 days for fraud.
+
+**3. Payment Failure During Grace Period**
+- **Scenario:** Card expires, payment fails, enters 3-day grace period
+- **Flow:** Day 1-3: User retains tier access, send payment update reminders. Day 4: Downgrade to Basic if not recovered. If user updates payment during grace, platform auto-retries and webhook updates backend to ACTIVE.
+
+### Critical Implementation Gotchas
+
+**Wallet Locking for Concurrent Operations:**
+- Use database row-level locking (SELECT ... FOR UPDATE) when modifying coin balances
+- Prevents race conditions where two simultaneous transfers corrupt balance
+- Lock order: always lock player wallet before squad bank to avoid deadlocks
+
+**Network Failure Mid-Transaction:**
+- All coin movements must be atomic (database transactions)
+- If backend credits coins but fails to save transaction record → money created from nothing
+- If backend saves transaction but fails to credit → money disappears
+- Solution: Wrap balance update + transaction record in single database transaction
+
+**Android Acknowledge Timing:**
+- Google requires purchase acknowledgment within 3 days
+- If backend crashes after verification but before acknowledge → purchase refunded
+- Solution: Acknowledge immediately after successful verification, before crediting coins
+- Store acknowledge_status in purchases table to track which need retry
+
+---
+
+## RELATED DOCUMENTATION
+
+**Project Docs:**
+- **prd.mdc** - Feature overview and system architecture
+- **game-rules.mdc** - Complete business logic and tier validation rules
+- **transfer-market.mdc** - Transfer fees and contract management
+
+**Official References:**
+- [Apple StoreKit](https://developer.apple.com/documentation/storekit)
+- [Google Play Billing](https://developer.android.com/google/play/billing)
+- [react-native-iap](https://github.com/dooboolab/react-native-iap)

@@ -1,0 +1,383 @@
+---
+globs: src/users/**/*.*, src/transfers/**/*.*, src/contracts/**/*.*
+alwaysApply: false
+---
+
+# Player Valuation
+
+## Description
+Defines the player valuation system for SQUADZ app including performance score calculations, position-specific formulas, coin value mapping, and form tracking. Use this as the authoritative source for implementing player value calculations and transfer market pricing.
+
+---
+
+## System Overview
+
+### Value Ranges
+- **Performance Score (PS)**: 0.0 - 10.0 (universal scale across all positions)
+- **Coin Value**: 2 - 12 coins (derived from PS)
+
+### Position-Specific Formulas
+Four distinct formulas optimized for different positions:
+- Strikers/Forwards
+- Midfielders
+- Defenders
+- Goalkeepers
+
+---
+
+## Performance Score to Coin Value Mapping
+
+Players are valued in coins based on their Performance Score:
+
+| Performance Score | Coin Value | Player Type |
+|---|---|---|
+| 0.0 - 0.9 | 2 coins | Very low impact / Bench player |
+| 1.0 - 1.9 | 3 coins | Low impact player |
+| 2.0 - 2.9 | 4 coins | Developing player |
+| 3.0 - 3.9 | 5 coins | Average contributor |
+| 4.0 - 4.9 | 6 coins | Reliable performer |
+| 5.0 - 5.9 | 7 coins | Team regular |
+| 6.0 - 6.9 | 8 coins | Good performer / Key player |
+| 7.0 - 7.9 | 9 coins | Strong performer |
+| 8.0 - 8.9 | 10 coins | Elite player |
+| 9.0 - 9.4 | 11 coins | World class |
+| 9.5 - 10.0 | 12 coins | Perfect player (extremely rare) |
+
+### Mapping Rules
+- Use **inclusive lower bounds** (e.g., PS of exactly 6.0 = 8 coins)
+- PS is capped at 10.0 maximum
+- Coin values are discrete integers (no fractional coins)
+
+---
+
+## Position Formulas
+
+### Strikers/Forwards
+
+**Formula:**
+```
+PS = (G × 3.0) + (A × 1.5) + (MR × 2.0) + (MOTM × 1.5) + (Form × 2.0)
+```
+
+**Priority Order:** Goals >>> Assists > Match Rating > MOTM > Form
+
+**Variable Calculations:**
+
+| Variable | Calculation | Weight | Cap | Elite Benchmark |
+|---|---|---|---|---|
+| G (Goals) | Goals per match ÷ 1.5 | 30% | 1.0 | 1.5 goals/match |
+| A (Assists) | Assists per match ÷ 1.0 | 15% | 1.0 | 1.0 assist/match |
+| MR (Match Rating) | Match Rating ÷ 10 | 20% | 1.0 | 10.0 rating |
+| MOTM | % of matches as MOTM | 15% | 1.0 | 100% |
+| Form | Weighted performance score | 20% | 1.0 | Perfect form |
+
+**Example Calculation:**
+- 5 goals in 4 matches = 1.25 goals/match
+- 2 assists in 4 matches = 0.5 assists/match
+- 8.3 avg rating
+- 2 MOTM in 4 matches = 50% MOTM rate
+- Form = 0.80
+
+```
+G = 1.25 ÷ 1.5 = 0.833 (capped at 1.0)
+A = 0.5 ÷ 1.0 = 0.5
+MR = 8.3 ÷ 10 = 0.83
+MOTM = 0.5
+Form = 0.80
+
+PS = (0.833 × 3.0) + (0.5 × 1.5) + (0.83 × 2.0) + (0.5 × 1.5) + (0.80 × 2.0)
+PS = 2.499 + 0.75 + 1.66 + 0.75 + 1.60 = 7.259
+```
+Result: 7.259 PS → **9 coins**
+
+---
+
+### Midfielders
+
+**Formula:**
+```
+PS = (G × 1.8) + (A × 2.5) + (MR × 2.2) + (MOTM × 1.5) + (Form × 2.0)
+```
+
+**Priority Order:** Assists >>> Goals > Match Rating > Form > MOTM
+
+**Variable Calculations:**
+
+| Variable | Calculation | Weight | Cap | Elite Benchmark |
+|---|---|---|---|---|
+| G (Goals) | Goals per match ÷ 0.8 | 18% | 1.0 | 0.8 goals/match |
+| A (Assists) | Assists per match ÷ 1.2 | 25% | 1.0 | 1.2 assists/match |
+| MR (Match Rating) | Match Rating ÷ 10 | 22% | 1.0 | 10.0 rating |
+| MOTM | % of matches as MOTM | 15% | 1.0 | 100% |
+| Form | Weighted performance score | 20% | 1.0 | Perfect form |
+
+**Example Calculation:**
+- 2 goals in 4 matches, 4 assists, 8.0 avg rating, 1 MOTM, Form = 0.75
+- Result: 6.98 PS → **9 coins**
+
+---
+
+### Defenders
+
+**Formula:**
+```
+PS = (G × 0.8) + (A × 1.2) + (CS × 3.5) + (MR × 2.5) + (MOTM × 1.0) + (Form × 1.0)
+```
+
+**Priority Order:** Clean Sheets >>> Match Rating > Form > Assists > Goals
+
+**Variable Calculations:**
+
+| Variable | Calculation | Weight | Cap | Elite Benchmark |
+|---|---|---|---|---|
+| G (Goals) | Goals per match ÷ 0.3 | 8% | 1.0 | 0.3 goals/match |
+| A (Assists) | Assists per match ÷ 0.4 | 12% | 1.0 | 0.4 assists/match |
+| CS (Clean Sheets) | Clean Sheets per match | 35% | 1.0 | 0.8+ clean sheets |
+| MR (Match Rating) | Match Rating ÷ 10 | 25% | 1.0 | 10.0 rating |
+| MOTM | % of matches as MOTM | 10% | 1.0 | 100% |
+| Form | Weighted performance score | 10% | 1.0 | Perfect form |
+
+**Example Calculation:**
+- 1 goal, 1 assist, 3 clean sheets in 4 matches, 7.8 avg rating, 1 MOTM, Form = 0.70
+- Result: 7.05 PS → **9 coins**
+
+---
+
+### Goalkeepers
+
+**Formula:**
+```
+PS = (G × 0.5) + (A × 0.8) + (CS × 4.2) + (MR × 2.5) + (MOTM × 1.0) + (Form × 1.0)
+```
+
+**Priority Order:** Clean Sheets >>>> Match Rating > Form > Assists > Goals
+
+**Variable Calculations:**
+
+| Variable | Calculation | Weight | Cap | Elite Benchmark |
+|---|---|---|---|---|
+| G (Goals) | Goals per match ÷ 0.1 | 5% | 1.0 | Almost never happens |
+| A (Assists) | Assists per match ÷ 0.2 | 8% | 1.0 | Rare for GKs |
+| CS (Clean Sheets) | Clean Sheets per match | 42% | 1.0 | 0.85+ clean sheets |
+| MR (Match Rating) | Match Rating ÷ 10 | 25% | 1.0 | 10.0 rating |
+| MOTM | % of matches as MOTM | 10% | 1.0 | 100% |
+| Form | Weighted performance score | 10% | 1.0 | Perfect form |
+
+**Example Calculation:**
+- 0 goals, 0 assists, 3.5 clean sheets in 4 matches, 8.2 avg rating, 1 MOTM, Form = 0.75
+- Result: 6.83 PS → **8 coins**
+
+---
+
+## Weight Distribution Summary
+
+| Metric | Strikers | Midfielders | Defenders | Goalkeepers |
+|---|---|---|---|---|
+| Goals | 30% | 18% | 8% | 5% |
+| Assists | 15% | 25% | 12% | 8% |
+| Clean Sheets | --- | --- | 35% | 42% |
+| Match Rating | 20% | 22% | 25% | 25% |
+| MOTM | 15% | 15% | 10% | 10% |
+| Form | 20% | 20% | 10% | 10% |
+| **TOTAL** | **100%** | **100%** | **100%** | **100%** |
+
+---
+
+## Form Calculation
+
+Form reflects recent performance with recency bias, calculated using a weighted average of the last 4 match ratings.
+
+### Weighting Formula
+
+```
+Form = (R1 × 0.1) + (R2 × 0.2) + (R3 × 0.3) + (R4 × 0.4) ÷ 10
+```
+
+Where:
+- R1 = 4th most recent match (oldest)
+- R2 = 3rd most recent match
+- R3 = 2nd most recent match
+- R4 = Most recent match (newest)
+
+### Weight Distribution
+- Most Recent Match: **40%** weight
+- 2nd Most Recent: **30%** weight
+- 3rd Most Recent: **20%** weight
+- 4th Most Recent (Oldest): **10%** weight
+
+### Example Calculation
+
+Match ratings (oldest to newest): 7.0, 7.5, 8.0, 8.5
+
+```
+Form = (7.0 × 0.1) + (7.5 × 0.2) + (8.0 × 0.3) + (8.5 × 0.4)
+Form = 0.7 + 1.5 + 2.4 + 3.4 = 8.0
+
+Normalized: 8.0 ÷ 10 = 0.80
+```
+
+Result: Form value = **0.80** (used in PS formula)
+
+### Form Edge Cases
+- **Fewer than 4 matches**: Use available matches with same weighting distribution
+  - 3 matches: Use 0.2, 0.3, 0.5 weights (oldest to newest)
+  - 2 matches: Use 0.4, 0.6 weights
+  - 1 match: Use 1.0 weight (100% of that match)
+- **No matches**: Form = 0.0
+
+---
+
+## Calculation Rules
+
+### Variable Caps
+All normalized variables have a **hard cap of 1.0**:
+- If calculated value > 1.0, cap at 1.0
+- Example: Goals per match = 2.0, Elite = 1.5 → 2.0 ÷ 1.5 = 1.333 → **capped at 1.0**
+
+### Per-Match Calculations
+- **Goals per match** = Total goals ÷ Matches played
+- **Assists per match** = Total assists ÷ Matches played
+- **Clean sheets per match** = Total clean sheets ÷ Matches played (defenders/GKs only)
+- **MOTM rate** = MOTM awards ÷ Matches played
+
+### Match Rating Source
+- Use official match rating from match result (0.0 - 10.0 scale)
+- Average rating = Sum of all match ratings ÷ Matches played
+
+### Performance Score Rounding
+- Calculate PS to full precision (e.g., 7.259)
+- Do NOT round PS before mapping to coins
+- Coin mapping uses exact PS value with inclusive lower bounds
+
+### Minimum Data Requirements
+- Requires at least **1 completed match** to calculate valuation
+- Players with 0 matches default to **2 coins** (minimum valuation)
+
+---
+
+## Validation Rules
+
+### Position Validation
+- Clean Sheets metric ONLY applies to Defenders and Goalkeepers
+- Validate player position before applying formula
+- Invalid position → return error, do not default
+
+### Data Integrity Checks
+- All input values must be ≥ 0
+- Matches played must be > 0 (unless defaulting to 2 coins)
+- Match ratings must be 0.0 - 10.0 range
+- MOTM awards cannot exceed matches played
+
+### Performance Score Bounds
+- Minimum PS: 0.0
+- Maximum PS: 10.0
+- If calculated PS > 10.0, cap at 10.0
+- If calculated PS < 0.0, set to 0.0
+
+### Coin Value Bounds
+- Minimum: 2 coins
+- Maximum: 12 coins
+- Always return integer coin values
+
+---
+
+## Valuation Update Triggers
+
+### When to Recalculate
+- After each match completion (immediate update)
+- When match stats are finalized and ratings confirmed
+- When historical stats are corrected (admin override)
+
+### What Changes Valuation
+- New match results (updates stats and form)
+- Match rating changes
+- MOTM award assignments
+- Clean sheet status (for defenders/GKs)
+
+### What Does NOT Change Valuation
+- Squad transfers (valuation follows player)
+- Competition changes
+- Time passage (no decay without matches)
+- External factors (injuries, team performance)
+
+---
+
+## Edge Cases
+
+### Perfect Score Scenario
+For a player to reach 10.0 PS (12 coins):
+- All normalized variables must equal or near 1.0
+- Example Striker: 1.5 goals/match, 1.0 assist/match, 10.0 rating, 100% MOTM, perfect form
+- Extremely rare in practice
+
+### New Player Valuation
+- First match: Form based on single match (weight = 1.0)
+- Valuation updates after first match completion
+- Until first match: Default 2 coins
+
+### Position Change Mid-Season
+- Immediately switch to new position formula
+- Historical stats remain but interpreted through new formula
+- May cause valuation jump or drop
+
+### Clean Sheet Calculation
+- Match must end with opponent scoring 0 goals
+- Player must have participated (started or subbed on)
+- Defenders/GKs only - validate position before counting
+
+### MOTM Ties
+- If multiple players share MOTM, each counts as 1.0 MOTM for their stats
+- System should support multiple MOTM per match
+
+### Zero Division Protection
+- If matches played = 0, default to 2 coins (don't calculate)
+- Never divide by zero in any calculation
+- Form calculation handles 0 matches (returns 0.0)
+
+---
+
+## Implementation Notes
+
+### Data Requirements
+
+**Player Stats Tracking:**
+- Total goals scored (lifetime and recent)
+- Total assists (lifetime and recent)
+- Total clean sheets (defenders/GKs only)
+- Matches played count
+- Individual match ratings (last 4+ matches for form)
+- MOTM awards count
+- Player position (for formula selection)
+
+**Match-Level Data:**
+- Match result and stats finalization timestamp
+- Individual player performance in each match
+- Match rating per player
+- Clean sheet status per match
+
+> Refer to `db-schema.mdc` for exact field names and table structure.
+
+### Critical Business Rules
+
+1. **Position determines formula** - Never apply wrong position formula
+2. **Variable caps are hard limits** - Values > 1.0 must be capped at 1.0
+3. **Form uses last 4 matches** - No more, no less (unless insufficient data)
+4. **PS-to-coins mapping is universal** - Same table for all positions
+5. **Valuation updates are immediate** - No delayed or batched updates
+6. **Clean sheets only for defenders/GKs** - Validate position before using CS metric
+7. **Minimum valuation is 2 coins** - No player can be valued lower
+
+### State Management
+- Calculate valuation after each match completion
+- Cache calculated PS and coin value on player record
+- Invalidate cache when match stats change
+- Use transactions for stat updates to ensure consistency
+
+---
+
+## Related Documentation
+
+- **`prd.mdc`** - Product requirements and feature specifications
+- **`game-rules.mdc`** - Complete business rules for the app
+- **`transfer-market.mdc`** - Transfer market logic using player valuations
+- **`db-schema.mdc`** - Database schema for player stats and valuation tracking

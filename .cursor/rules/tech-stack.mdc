@@ -1,0 +1,647 @@
+---
+description: 'Technology stack choices: NestJS, Prisma, PostgreSQL, TypeScript, Jest, Pactum, AWS Elastic Beanstalk. Defines technologies used, external integrations,  dependencies, configuration patterns, and infrastructure setup. Applies to all import statements and package usage.'
+alwaysApply: true
+---
+
+# TECH STACK DOCUMENTATION
+
+## DESCRIPTION
+
+Technology stack for SQUADZ - mobile tournament management app for FC25 Pro Clubs. Defines frontend, backend, infrastructure, third-party integrations, and environment configuration.
+
+---
+
+## TECH STACK OVERVIEW
+
+### Frontend (Mobile - React Native)
+
+| Technology                | Purpose                             |
+| ------------------------- | ----------------------------------- |
+| **Expo**                  | React Native framework              |
+| **NativeWind**            | Styling (Tailwind for React Native) |
+| **React Native Elements** | UI Components                       |
+| **TanStack Query**        | Data fetching & caching             |
+| **Zustand**               | Global state management             |
+| **React Hook Form**       | Form handling                       |
+| **Zod**                   | Schema validation                   |
+| **Axios**                 | HTTP client                         |
+| **Expo Secure Store**     | Secure token storage                |
+| **Expo Notifications**    | Push notifications                  |
+| **Socket.io Client**      | Real-time communication             |
+
+### Backend (Node.js)
+
+| Technology           | Purpose               |
+| -------------------- | --------------------- |
+| **NestJS**           | Backend framework     |
+| **PostgreSQL**       | Primary database      |
+| **Prisma**           | ORM                   |
+| **Redis**            | Cache & rate limiting |
+| **BullMQ**           | Background job queue  |
+| **JWT**              | Authentication        |
+| **Class Validator**  | DTO validation        |
+| **Swagger/OpenAPI**  | API documentation     |
+| **Socket.io Server** | WebSocket server      |
+
+### Infrastructure (AWS)
+
+| Service                                 | Purpose                                |
+| --------------------------------------- | -------------------------------------- |
+| **Elastic Beanstalk**                   | Application hosting                    |
+| **RDS (PostgreSQL)**                    | Managed database                       |
+| **S3**                                  | Object storage (media files)           |
+| **CloudFront**                          | CDN (media delivery)                   |
+| **Lambda**                              | Avatar processing (Sharp + Removal.ai) |
+| **SES** with **@nestjs-modules/mailer** | Email service                          |
+| **Secrets Manager**                     | Secrets management                     |
+| **CloudWatch**                          | Monitoring & logging                   |
+
+### Third-Party Integrations
+
+| Service                 | Purpose                                          |
+| ----------------------- | ------------------------------------------------ |
+| **Discord API**         | Match coordination (see discord-integration.mdc) |
+| **Removal.ai API**      | Avatar background removal                        |
+| **Sharp**               | Image optimization                               |
+| **Sentry**              | Error tracking                                   |
+| **PostHog**             | Product analytics                                |
+| **StoreKit (iOS)**      | In-app purchases (coins + subscriptions)         |
+| **Google Play Billing** | In-app purchases (coins + subscriptions)         |
+
+### Testing
+
+| Tool       | Purpose         | Runs Where          |
+| ---------- | --------------- | ------------------- |
+| **Jest**   | Unit testing    | Backend: Local + CI |
+| **Pactum** | API E2E testing | Local Docker in CI  |
+
+### Development Tools
+
+| Tool               | Purpose           |
+| ------------------ | ----------------- |
+| **TypeScript**     | Type safety       |
+| **ESLint**         | Code linting      |
+| **Prettier**       | Code formatting   |
+| **Docker**         | Local database    |
+| **GitHub Actions** | CI/CD pipeline    |
+| **EAS (Expo)**     | Mobile app builds |
+
+---
+
+## ENVIRONMENTS
+
+### Development (Local)
+
+**Infrastructure:**
+
+- Local NestJS server
+- Docker PostgreSQL
+- Docker Redis
+- AWS S3 dev bucket (squadz-media-dev)
+- Real third-party APIs with dev keys
+
+**Third-Party APIs (Real, Not Mocked):**
+
+- Discord: Dev bot, test server
+- Removal.ai: Dev API key (free tier, 50 images/month)
+- S3: Dev bucket with auto-cleanup (7-day lifecycle)
+- Sentry: Dev project
+- PostHog: Dev project
+
+**Configuration:**
+
+```env
+NODE_ENV=development
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/squadz_dev
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=dev-secret-key
+
+# Real APIs (dev keys)
+DISCORD_BOT_TOKEN=<dev bot token>
+REMOVAL_AI_API_KEY=<dev api key>
+AWS_S3_BUCKET=squadz-media-dev
+AWS_ACCESS_KEY_ID=<dev access key>
+SENTRY_DSN=<dev dsn>
+POSTHOG_API_KEY=<dev api key>
+```
+
+**Why Real APIs:**
+
+- Test actual API behavior and errors
+- Catch integration issues before production
+- Same code in dev and production
+
+---
+
+### Production (AWS)
+
+**Infrastructure:**
+
+- AWS Elastic Beanstalk
+- AWS RDS PostgreSQL (single-AZ initially)
+- AWS ElastiCache Redis
+- S3 bucket (squadz-media)
+- CloudFront CDN
+- Lambda (image-processor)
+
+**Configuration:**
+
+```env
+NODE_ENV=production
+DATABASE_URL=<from Secrets Manager>
+REDIS_URL=<from Secrets Manager>
+JWT_SECRET=<from Secrets Manager>
+AWS_S3_BUCKET=squadz-media
+DISCORD_BOT_TOKEN=<from Secrets Manager>
+REMOVAL_AI_API_KEY=<from Secrets Manager>
+SENTRY_DSN=<from Secrets Manager>
+```
+
+---
+
+## PAYMENT PROCESSING
+
+### Payment Methods
+
+1. **Digital Coins** - In-app currency for tournament fees, transfers
+2. **Subscriptions** - Pro and Premium tiers (monthly/annual)
+
+---
+
+### iOS (StoreKit)
+
+**Library:** `expo-in-app-purchases` or `react-native-iap`
+
+**Product IDs:**
+
+```typescript
+// Coins (consumable)
+'com.squadz.coins.100';
+'com.squadz.coins.500';
+'com.squadz.coins.1000';
+
+// Subscriptions (auto-renewable)
+'com.squadz.subscription.pro.monthly';
+'com.squadz.subscription.pro.annual';
+'com.squadz.subscription.premium.monthly';
+'com.squadz.subscription.premium.annual';
+```
+
+**Backend Verification:**
+
+- Validate receipts via Apple App Store Server API
+- Webhook notifications for subscription events
+
+---
+
+### Android (Google Play Billing)
+
+**Library:** `expo-in-app-purchases` or `react-native-iap`
+
+**Product IDs:**
+
+```typescript
+// Coins (consumable)
+'coins_100';
+'coins_500';
+'coins_1000';
+
+// Subscriptions (auto-renewing)
+'subscription_pro_monthly';
+'subscription_pro_annual';
+'subscription_premium_monthly';
+'subscription_premium_annual';
+```
+
+**Backend Verification:**
+
+- Validate purchase tokens via Google Play Developer API
+- Real-time developer notifications for subscription events
+
+---
+
+### Backend Processing
+
+**Purchase Flow:**
+
+1. User initiates purchase (frontend)
+2. Platform handles payment (StoreKit/Google Play)
+3. App receives receipt/token
+4. App sends to backend for verification
+5. Backend verifies with Apple/Google API
+6. Backend updates user coins or subscription status
+7. Backend returns success
+
+**Key Rules:**
+
+- Server-side verification required (never trust client)
+- Idempotency: Same receipt cannot credit twice
+- Webhooks handle renewals, cancellations, refunds
+
+---
+
+### Testing
+
+**Development:**
+
+- iOS: Sandbox Tester accounts (App Store Connect)
+- Android: License testing accounts (Google Play Console)
+- Test purchases don't charge real money
+
+---
+
+## DATABASE
+
+### Environments
+
+| Environment     | Database        | Configuration                                      |
+| --------------- | --------------- | -------------------------------------------------- |
+| **Development** | Docker Postgres | Local container for manual testing                 |
+| **E2E Tests**   | Docker Postgres | Separate container for automated tests             |
+| **Unit Tests**  | None            | All database calls mocked (no database connection) |
+| **Production**  | AWS RDS         | Managed PostgreSQL (single-AZ, scale to multi-AZ)  |
+
+### Database Strategy
+
+| Database           | Used By        | Purpose                                                     |
+| ------------------ | -------------- | ----------------------------------------------------------- |
+| **Development DB** | Manual work    | Exploration, Prisma Studio, manual API testing              |
+| **Test DB**        | E2E tests only | Automated E2E tests (local & CI) with predictable seed data |
+| **NO DATABASE**    | Unit tests     | Unit tests mock PrismaService entirely                      |
+
+**Key Points:**
+
+- Unit tests NEVER connect to a database (all Prisma calls mocked)
+- E2E tests ONLY use separate test database (never touch dev database)
+- Dev database safe for manual work (never modified by automated tests)
+- Each database isolated and serves a specific purpose
+
+---
+
+### Configuration
+
+**Development:**
+
+```yaml
+Image: postgres:15
+Port: 5432
+Database: squadz_dev
+Connection: Local Docker container
+```
+
+**E2E Tests:**
+
+```yaml
+Image: postgres:15
+Port: 5433
+Database: squadz_test
+Connection: Separate Docker container (isolated from dev)
+```
+
+**Production:**
+
+- Engine: PostgreSQL 15
+- Instance: db.t3.micro (start small)
+- SSL required
+- Backups: Daily (7-day retention)
+
+---
+
+### Migrations
+
+**Tool:** Prisma Migrate
+
+**Workflow:**
+
+1. Local: `npx prisma migrate dev --name <description>`
+2. Test locally with seeded data
+3. Commit migration files
+4. Production: CI applies via `npx prisma migrate deploy`
+
+**Rules:**
+
+- Forward-only (never rollback)
+- Never delete or edit applied migrations
+- Breaking changes require multi-step migrations
+
+---
+
+### Data Seeding
+
+**Development seed** (`prisma/seed.ts`):
+
+- Seeds: Development database
+- Purpose: Manual development and exploration
+- Data: Rich, varied data for UI/manual testing
+- Run: `npx prisma db seed`
+
+**E2E test seed** (`prisma/seed.test.ts`):
+
+- Seeds: Test database (E2E tests only)
+- Purpose: Automated E2E tests
+- Data: Predictable test accounts with fixed IDs
+- Run: `npm run db:seed:test`
+- Reset before each CI run
+
+**Unit tests:**
+
+- No seed data (no database used)
+
+**Production:**
+
+- Real user data only
+- Never seeded
+
+---
+
+## TESTING
+
+### Unit Tests (Backend)
+
+**Framework:** Jest
+
+**Scope:**
+
+- Service layer logic
+- Utility functions
+- Validation logic
+- Business calculations
+
+**Database:**
+
+- ❌ **NONE** - All PrismaService calls are mocked
+- Tests run without any database connection
+- Focus on pure business logic
+
+**External APIs:**
+
+- ❌ **All mocked** (Discord, Removal.ai, payments, S3)
+
+**Runs:**
+
+- Local: `npm run test`
+- CI: On every PR (must pass to merge)
+
+---
+
+### E2E Tests (Backend)
+
+**Framework:** Pactum
+
+**Scope:**
+
+- Critical API workflows
+- Auth flows (register, login, refresh)
+- Squad/competition/match flows
+- Transfer market flows
+
+**Database:**
+
+- ✅ **Real test database** - Separate Docker Postgres container
+- Uses `seed.test.ts` for predictable test data with fixed IDs
+- Reset between CI runs
+
+**External APIs:**
+
+- ✅ **Real test credentials** (Discord dev bot, Removal.ai dev key, payment sandboxes, S3 dev bucket)
+
+**Runs:**
+
+- Local: Docker environment
+- CI: Docker environment (before production deploy)
+
+**Must pass before production deployment**
+
+---
+
+## CI/CD PIPELINE
+
+**Tool:** GitHub Actions
+
+---
+
+### Stage 1: Pull Request
+
+**Triggers:** PR opened/updated
+
+**Steps:**
+
+1. Checkout code
+2. Install dependencies
+3. Run linting (ESLint)
+4. Run unit tests (Jest)
+
+**Gates:**
+
+- ❌ Lint/tests fail → Block merge
+- ✅ Pass → Allow merge
+
+---
+
+### Stage 2: Deploy to Production
+
+**Triggers:** Merge to `main`
+
+**Steps:**
+
+1. Checkout code
+2. Install dependencies
+3. Start Docker (Postgres + Redis)
+4. Apply migrations to test DB
+5. Seed E2E test data
+6. Start NestJS API
+7. Run E2E tests
+8. **If pass:**
+   - Apply migrations to production RDS
+   - Deploy to Elastic Beanstalk
+   - Deploy Lambda function
+   - Health checks
+   - Monitor CloudWatch
+
+**Gates:**
+
+- ❌ E2E tests fail → Block deployment
+- ❌ Health checks fail → Auto-rollback
+- ✅ Pass → Production live
+
+---
+
+### Rollback
+
+**Automatic triggers:**
+
+- Health check failures
+- Error rate spike
+- Database connection failures
+
+**Process:**
+
+- Elastic Beanstalk: Revert to previous version
+- Lambda: Revert to previous version
+- Migrations: NOT rolled back (use forward migration)
+
+---
+
+## LAMBDA (AVATAR PROCESSING)
+
+### Configuration
+
+```yaml
+Name: image-processor
+Runtime: Node.js 18.x
+Memory: 512 MB
+Timeout: 60 seconds
+Trigger: S3 ObjectCreated (squadz-media/temp/uploads/*)
+```
+
+---
+
+### Processing Flow
+
+```
+1. User uploads → S3 temp/uploads/
+2. S3 triggers Lambda
+3. Lambda: Sharp optimization (resize, compress)
+4. Lambda: Removal.ai background removal
+5. Lambda: Upload final → S3 avatars/{user_id}.png
+6. Lambda: Delete temp file
+7. Lambda: Update user.avatar_url in database
+```
+
+**Stored:** Final avatar only (optimized + background removed)
+
+---
+
+## AUTHENTICATION
+
+**Storage:**
+
+- Access tokens: Expo Secure Store
+- Refresh tokens: Expo Secure Store
+- Auth state: Zustand with AsyncStorage
+
+**Token Refresh:** Axios interceptors
+
+**Complete details:** auth-strategy.mdc
+
+---
+
+## SECURITY
+
+### API Security
+
+**CORS:**
+
+- Development: `http://localhost:3000` (Swagger)
+- Production: `https://api.squadz.app` (Swagger)
+- Mobile apps bypass CORS
+
+**Rate Limiting:**
+
+- Redis-based
+- 100 requests/minute per IP
+
+**Password Security:**
+
+- bcrypt (10 rounds)
+
+**Database:**
+
+- SSL connections required (production)
+
+**Logging:**
+
+- Redact tokens, passwords, API keys
+
+---
+
+### S3 Security
+
+**Avatar storage:**
+
+- Public read (served via CloudFront)
+- Bucket: `squadz-media/avatars/`
+
+**Temp uploads:**
+
+- Private (no public access)
+- Bucket: `squadz-media/temp/uploads/`
+- Auto-deleted after processing
+
+---
+
+## MONITORING
+
+### Error Tracking
+
+**Sentry:**
+
+- Backend errors
+- Frontend crashes
+- Performance monitoring
+
+---
+
+### Analytics
+
+**PostHog:**
+
+- User behavior
+- Feature usage
+- A/B testing
+
+---
+
+### Infrastructure
+
+**CloudWatch:**
+
+- Application logs
+- Lambda invocations
+- RDS metrics
+- Error rates
+
+---
+
+## DOCUMENTATION REFERENCES
+
+### Framework Documentation
+
+| Framework    | Documentation                                |
+| ------------ | -------------------------------------------- |
+| NestJS       | https://docs.nestjs.com/                     |
+| Prisma       | https://www.prisma.io/docs                   |
+| Expo         | https://docs.expo.dev/                       |
+| React Native | https://reactnative.dev/docs/getting-started |
+
+### AWS Services
+
+| Service           | Documentation                                 |
+| ----------------- | --------------------------------------------- |
+| Elastic Beanstalk | https://docs.aws.amazon.com/elasticbeanstalk/ |
+| RDS               | https://docs.aws.amazon.com/rds/              |
+| S3                | https://docs.aws.amazon.com/s3/               |
+| Lambda            | https://docs.aws.amazon.com/lambda/           |
+
+### Third-Party Services
+
+| Service             | Documentation                                      |
+| ------------------- | -------------------------------------------------- |
+| Discord API         | https://discord.com/developers/docs                |
+| Removal.ai          | https://removal.ai/api-documentation/              |
+| Sentry              | https://docs.sentry.io/                            |
+| PostHog             | https://posthog.com/docs                           |
+| StoreKit            | https://developer.apple.com/documentation/storekit |
+| Google Play Billing | https://developer.android.com/google/play/billing  |
+
+---
+
+## RELATED DOCUMENTATION
+
+- **prd.mdc** - Product requirements and features
+- **game-rules.mdc** - Business rules and validation logic
+- **auth-strategy.mdc** - Authentication flows (JWT, OAuth, password reset, OTP, email verification)
+- **discord-integration.mdc** - Discord OAuth, bot setup, channel management
+- **db-schema.mdc** - Complete database schema
+- **api-requirements.mdc** - Complete endpoint specifications and RBAC matrix
+- **backend-architecture.mdc** - Module organization, service patterns, request flow

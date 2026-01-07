@@ -1,0 +1,593 @@
+---
+globs: src/discord/**/*.*, test/discord.e2e-spec.ts
+alwaysApply: false
+---
+
+# DISCORD INTEGRATION DOCUMENTATION
+
+## DESCRIPTION
+
+Discord integration provides external communication infrastructure for SQUADZ tournament platform. Players coordinate matches, communicate within squads, negotiate transfers, and upload video evidence through Discord channels. SQUADZ handles tournament management logic while Discord handles all communication infrastructure.
+
+**Critical Understanding:** All chat, voice, and file sharing happens in Discord (external platform). SQUADZ app provides deep links to open Discord channels but contains no chat UI, no message storage, and no WebSocket messaging. This separation allows SQUADZ to focus on tournament features while leveraging Discord's robust communication infrastructure that the target audience already uses for gaming.
+
+**Integration Components:**
+- Discord OAuth for one-time account linking during account setup (captures Discord User ID)
+- Discord Bot API for automated channel creation and permission management
+- Deep links to open Discord app from mobile interface
+- Automated lifecycle management for channels (creation, deletion, cleanup)
+- Three channel types: match coordination rooms, squad team channels, transfer market private channels
+
+---
+
+## ARCHITECTURE
+
+**System Flow:**
+
+## WHAT SQUADZ HANDLES
+
+**Tournament Management Only:**
+
+SQUADZ app is responsible for account management, match scheduling, lineup submission, results tracking, and tournament logic. Discord is solely an external communication tool that SQUADZ references but does not replace.
+
+### Discord OAuth Flow
+
+**Purpose:** One-time account connection during account setup (Page 4) to capture Discord User ID for all Discord channel access.
+
+**When Required:**
+- Required during account setup (Page 4 of 4)
+- User cannot become Player without completing Discord connection
+- Blocks access to all app features until completed
+
+**Flow Sequence:**
+User reaches Page 4 of account setup → Tap "Connect Discord" button → Browser redirects to Discord OAuth → User authorizes SQUADZ app → Discord redirects back with authorization code → Backend exchanges code for access token → Backend fetches Discord user profile → Save Discord User ID to player record → Account setup complete → User becomes Player → Full app access unlocked.
+
+**OAuth Scope:** Identify scope only (provides user ID, username, discriminator).
+
+**Security Consideration:** State parameter prevents CSRF attacks. Generated random value stored in session, validated on callback. Access tokens encrypted in database, never exposed to client. Refresh tokens enable silent renewal without re-authorization.
+
+### Connection Status Tracking
+
+**Database Storage:** Player records include Discord User ID, Discord username, and connection timestamp. This data enables bot to add users to channels by ID without requiring guild membership checks.
+
+**Validation Gates:** Account setup cannot complete without Discord connection. Server-side validation prevents bypassing client checks. Setup flow blocks progression from Page 4 until OAuth completes successfully.
+
+**Disconnection Handling:** Players can disconnect Discord from settings. If player is active Captain, Vice Captain, or squad member, warn that disconnection removes access to squad channels and match coordination. Require confirmation for this action. Disconnection removes player from all Discord channels automatically.
+
+### Bot API Integration
+
+**Bot Responsibilities:** Creates private text channels when triggered, manages channel permissions (adds/removes users by Discord User ID), posts automated welcome messages with relevant details, deletes channels based on lifecycle rules.
+
+**Channel Creation Triggers:**
+- **Squad Team Channel:** Captain creates squad → Immediate channel creation
+- **Match Coordination Room:** Both squads submit lineups → Async channel creation
+- **Transfer Market Channel:** Captain initiates transfer interest with player → Immediate channel creation
+
+**Permission Model:** Default denies all access (everyone role). Bot has full access (view, send messages). Relevant users added with view and send permissions using saved Discord User IDs. Admin automatically added with elevated permissions (view, send, manage messages for moderation).
+
+**Welcome Messages:** Automated message posts context-specific details (squad info for team channels, match details for coordination rooms, transfer details for negotiation channels).
+
+### Deep Link Generation
+
+**Purpose:** Allow users to open specific Discord channel directly from SQUADZ app.
+
+**URL Schemes:** Discord supports app scheme (opens Discord app if installed) and web scheme (opens browser if app not installed). SQUADZ attempts app scheme first, falls back to web scheme.
+
+**UI States:** 
+- **Squad Team Channel:** Button always enabled after squad creation
+- **Match Coordination Room:** Button disabled before lineups submitted, enabled after both lineups submitted
+- **Transfer Market Channel:** Button enabled after channel created during transfer initiation
+
+### Channel Lifecycle Management
+
+**Purpose:** SQUADZ backend tracks all created Discord channels and manages their lifecycle based on business events. Channels are created, managed, and deleted via Discord API calls triggered by SQUADZ events.
+
+**Database Tracking:** 
+- All Discord channels tracked in database with: channel_id, channel_type, purpose, participants, created_at, status
+- Channel types: squad_team, match_coordination, transfer_negotiation
+- Status values: active, locked, pending_deletion, deleted
+
+**Lifecycle Triggers:**
+
+**Squad Team Channels:**
+- **Created:** When Captain creates squad
+- **Members Added:** When players accept contracts (InitContract or CompContract)
+- **Members Removed:** When players break contracts or are removed from squad
+- **Deleted:** When squad is dissolved or all members leave
+
+**Match Coordination Rooms:**
+- **Created:** After both squads submit lineups
+- **Deleted:** 7 days after match completion and result verification
+
+**Transfer Market Channels:**
+- **Created:** When Captain initiates transfer interest with player
+- **Deleted:** After transfer finalized OR 7-day negotiation timeout
+
+**Automated Cleanup:**
+- Daily cron job identifies channels eligible for deletion based on lifecycle rules
+- Calls Discord API to delete channels
+- Updates database with deletion flag
+- Handles abandoned/stale channels automatically
+
+**Channel Status Tracking:**
+- active: Channel exists and operational
+- locked: Channel access restricted (optional pre-deletion state)
+- pending_deletion: Marked for deletion by next cleanup job
+- deleted: Channel removed from Discord, database record preserved
+
+---
+
+## WHAT SQUADZ DOES NOT HANDLE
+
+**No Communication Infrastructure:**
+
+SQUADZ contains zero chat, voice, or file sharing features. Understanding this boundary prevents wasted development effort on features Discord already provides.
+
+**Explicitly Excluded:**
+
+**Chat UI:** No message display, no text input boxes, no emoji pickers, no message history views. Users tap deep link and redirect to Discord for all messaging.
+
+**Message Storage:** No messages table in database, no message persistence, no message search. Discord stores all chat history on their servers.
+
+**WebSocket Connections for Chat:** No Socket.io or WebSocket events for chat messages. WebSockets in SQUADZ only handle match score updates and transfer notifications (see tech-stack.mdc for clarification). Discord has their own WebSocket gateway for real-time message delivery.
+
+**File Uploads:** No video upload infrastructure in SQUADZ app, no image storage in SQUADZ servers, no file hosting for dispute evidence in SQUADZ. Users upload files directly in Discord channels using Discord's file sharing. SQUADZ never receives, stores, or processes these files. Admin reviews files in Discord only.
+
+**Voice/Video Calls:** No WebRTC, no voice channels in app, no video call infrastructure. Discord provides voice and screen sharing in their channels.
+
+**Notification Systems for Chat:** No push notifications for new chat messages. Discord app handles all message notifications on user's device.
+
+**Read Receipts and Typing Indicators:** Discord handles these features, SQUADZ does not track or display them.
+
+**Message Archiving:** No backup or archiving of Discord chat history. When channels are deleted, all messages are permanently removed from Discord servers. SQUADZ does not preserve chat content.
+
+---
+
+## DISCORD OAUTH IMPLEMENTATION
+
+### When OAuth Is Triggered
+
+**Mandatory Trigger:**
+- Account setup Page 4 of 4 (required for all users)
+- User cannot progress beyond Page 4 without completing Discord connection
+- User cannot become Player without Discord connection
+- Blocks access to all app features until completed
+
+**Why Mandatory at Signup:** Discord is core infrastructure for all communication features. Requiring connection upfront prevents friction later when players join squads, participate in matches, or access transfer market. Users understand Discord requirement before investing time in app.
+
+**Validation Timing:** Server validates Discord connection exists before allowing account setup completion. Client can show early warnings, but server enforces requirement.
+
+### OAuth Configuration Requirements
+
+**Scope Selection:** Identify scope only. Provides access to user ID, username, discriminator, and avatar.
+
+**Redirect URI Setup:** Discord requires exact match on redirect URI. Must include protocol, domain, and path. Mobile apps use custom scheme. Cannot use wildcards. Consider separate Discord applications for development and production with different redirect URIs.
+
+**Environment Variables:** Client ID (application identifier from Discord Developer Portal), Client Secret (OAuth secret, backend only, never exposed to client), Redirect URI (callback URL, must match Discord application settings exactly).
+
+### Connection Status Management
+
+**Database Fields:** Player record includes Discord User ID (permanent identifier), Discord username (for display), connection timestamp (tracks when established), and encrypted access token (for future API calls if needed).
+
+**Disconnection Logic:** Deleting connection removes Discord User ID and access token from database. Removes player from all Discord channels immediately (squad teams, active match rooms, transfer negotiations). If player is active Captain, Vice Captain, or squad member, show warning that disconnection removes all channel access. Require confirmation.
+
+**Token Refresh:** Access tokens expire after 7 days. If storing access token for future use, implement refresh token flow. When API call returns unauthorized, exchange refresh token for new access token. Discord provides refresh token in initial OAuth response.
+
+---
+
+## DISCORD BOT SETUP
+
+### Bot Purpose and Permissions
+
+**Bot Responsibilities:** Acts as SQUADZ's automated agent in Discord server. Creates and deletes text channels, manages channel permissions, posts automated messages, serves as administrative interface.
+
+**Required Permissions:**
+
+| Permission | Bitmask | Purpose |
+|------------|---------|---------|
+| Manage Channels | 16 | Create and delete channels |
+| View Channels | 1024 | Read channel list and structure |
+| Send Messages | 2048 | Post automated messages |
+| Embed Links | 16384 | Send rich formatted content |
+| **Total** | **19472** | **Use this for bot invite URL** |
+
+**Required Intents:** GUILDS intent only (receive guild and channel events). Does not need MESSAGE_CONTENT intent (privileged, requires verification for 100+ servers).
+
+### Bot Configuration
+
+**Discord Developer Portal Setup:** Create new application, name appropriately (appears in OAuth screens), navigate to Bot tab, generate bot token. Token shows once, save immediately to environment variable.
+
+**Bot Invite Process:** Construct invite URL with client ID and calculated permission integer. Server owner opens URL, selects server, reviews permissions, authorizes bot. Bot appears in server member list.
+
+**Guild Configuration:** SQUADZ requires dedicated Discord server. Create new server for SQUADZ.
+
+### Environment Configuration
+
+| Aspect | Development | Production |
+|--------|-------------|------------|
+| Discord Application | Separate dev app | Production app |
+| OAuth Redirect URI | `http://localhost:3000/auth/discord/callback` | `https://api.squadz.app/auth/discord/callback` |
+| Discord Server | Test server | Main SQUADZ server |
+| Bot Token | Dev bot token | Production bot token |
+| Guild ID | Test server ID | Production server ID |
+| Storage | `.env.local` (gitignored) | AWS Secrets Manager |
+
+**Environment Variables:** Bot Token (authenticates bot API calls, backend only), Guild ID (identifies Discord server, obtained by copying server ID in Discord), Client ID and Secret (OAuth credentials).
+
+---
+
+## CHANNEL TYPES AND IMPLEMENTATION
+
+### Squad Team Channels
+
+**Purpose:** Persistent communication space for squad members. Used for team coordination, strategy discussion, general communication, and squad-related announcements.
+
+**Creation Trigger:** Captain creates squad. Channel created immediately and synchronously.
+
+**Channel Name Format:** `squad-{squad_name}-{squad_id}` (lowercase, hyphens replace spaces). Example: `squad-fc-warriors-abc123`.
+
+**Participant Management:**
+
+| Event | Action |
+|-------|--------|
+| Squad created | Captain automatically added |
+| Player accepts InitContract | Player added to channel |
+| Player accepts CompContract | Player added to channel (if not already) |
+| Player breaks contract | Player removed from channel |
+| Captain removes player | Player removed from channel |
+| Vice Captain assigned | Vice Captain gains access (already in channel as player) |
+| Squad dissolved | All members removed, channel deleted |
+
+**Lifecycle:** Remains active for squad lifetime. Deleted when squad is dissolved or all members leave.
+
+**Welcome Message Content:**
+- Squad name and logo
+- Captain and Vice Captain names
+- Squad creation date
+- Purpose: "Team coordination and communication space"
+- Reminder: Channel persists as long as squad exists
+
+### Match Coordination Rooms
+
+**Purpose:** Temporary space for match-specific coordination. Captains coordinate FC25 team invites, agree on match setup, share stream links, and upload video evidence for disputes.
+
+**Creation Trigger:** Both squads submit lineups. Channel created asynchronously (background job) when second lineup submission completes.
+
+**Channel Name Format:** `match-{competition}-{squad1}-vs-{squad2}-{match_id}` (lowercase, hyphens). Example: `match-league-warriors-vs-kings-xyz789`.
+
+**Participant Management:**
+
+| Role | Added When | Permissions |
+|------|------------|-------------|
+| Captain (both squads) | Channel creation | View, send messages |
+| Vice Captain (both squads) | Channel creation (if Discord connected) | View, send messages |
+| Admin | Channel creation (all admins) | View, send, manage messages |
+
+**Vice Captain Handling:** If Vice Captain hasn't connected Discord, skip their addition. Channel creation succeeds without Vice Captain.
+
+**Lifecycle:** Deleted via Discord API 7 days after match completion and result verification. Daily cron job identifies expired matches and triggers deletion.
+
+**Welcome Message Content:**
+- Match details (squads, competition, scheduled time)
+- Coordination instructions (team invites, match setup)
+- Dispute resolution guidance (upload video evidence)
+- Retention notice (channel deleted after 7 days)
+
+**Post-Match Usage:** Channel remains active during 7-day window for dispute resolution.
+
+### Transfer Market Private Channels
+
+**Purpose:** Private negotiation space for Captain and player during transfer market process.
+
+**Creation Trigger:** Captain initiates transfer interest with player in transfer market. Channel created immediately and synchronously.
+
+**Channel Name Format:** `transfer-{captain_name}-{player_name}-{timestamp}` (lowercase, hyphens). Example: `transfer-john-doe-1640000000`.
+
+**Participant Management:**
+
+| Role | Added When | Permissions |
+|------|------------|-------------|
+| Captain | Channel creation | View, send messages |
+| Player (transfer target) | Channel creation | View, send messages |
+| Admin | Channel creation | View, send, manage messages |
+
+**FC25 Attributes Display:** During transfer negotiations, players can share FC25 attribute screenshots (uploaded to profile) in channel or reference them.
+
+**Lifecycle:** Deleted via Discord API after transfer finalized (accepted/rejected) OR 7-day negotiation timeout if no action taken.
+
+**Welcome Message Content:**
+- Captain and player names
+- Player's current stats, XP, grade, valuation
+- Link to player's profile in app
+- Purpose: "Private space for transfer negotiation"
+- Reminder: Channel deleted after transfer resolved or 7-day timeout
+
+**Post-Transfer Actions:**
+- **If transfer accepted:** Player joins squad, automatically added to squad team channel, transfer channel deleted
+- **If transfer rejected:** Both parties notified in app, transfer channel deleted after 24 hours
+- **If timeout (7 days no action):** Channel deleted automatically, no transfer occurs
+
+---
+
+## CHANNEL CREATION IMPLEMENTATION
+
+### Squad Team Channel Creation
+
+**Timing:** Synchronous with squad creation request.
+
+**Flow:**
+1. Captain submits squad creation form
+2. Backend validates squad data
+3. Backend creates squad record in database
+4. Backend calls Discord Bot API to create channel
+5. Backend adds Captain to channel permissions
+6. Backend posts welcome message in channel
+7. Backend saves channel_id to squad record
+8. Response includes squad details and channel_id
+9. Frontend shows success message and "Join Team Chat" button
+
+**Error Handling:** If channel creation fails, rollback squad creation. Squad cannot exist without team channel. Return error to frontend. Captain must retry entire squad creation process.
+
+### Match Coordination Room Creation
+
+**Timing:** Asynchronous after both lineups submitted. Background job creates channel to avoid blocking lineup submission.
+
+**Flow:**
+1. Second squad submits lineup
+2. Backend validates lineup data
+3. Backend saves lineup to database
+4. Backend enqueues channel creation job
+5. Response confirms lineup submitted successfully
+6. Background job executes:
+   - Calls Discord Bot API to create channel
+   - Adds Captains and Vice Captains to permissions
+   - Adds Admin to permissions
+   - Posts welcome message in channel
+   - Saves channel_id to match record
+7. Frontend polls for channel_id or receives WebSocket update
+8. "Join Match Chat" button enabled when channel ready
+
+**Error Handling:** If channel creation fails, mark match as "Channel Creation Failed" status. Show error to both Captains. Block match progression. Admin must investigate and manually resolve.
+
+### Transfer Market Channel Creation
+
+**Timing:** Synchronous with transfer interest initiation.
+
+**Flow:**
+1. Captain initiates transfer interest with player
+2. Backend validates Captain can send transfer request
+3. Backend creates transfer record in database (pending status)
+4. Backend calls Discord Bot API to create channel
+5. Backend adds Captain and player to channel permissions
+6. Backend adds Admin to permissions
+7. Backend posts welcome message in channel
+8. Backend saves channel_id to transfer record
+9. Response includes transfer details and channel_id
+10. Both parties receive notification with "Join Negotiation Chat" button
+
+**Error Handling:** If channel creation fails, rollback transfer interest. Return error to Captain. Captain must retry transfer initiation.
+
+---
+
+## DEEP LINKS TO DISCORD
+
+### Deep Link Purpose
+
+**Seamless Transition:** Users tap button in SQUADZ app and Discord app opens to specific channel.
+
+**URL Scheme Options:** Discord supports app scheme (opens Discord app if installed) and web scheme (opens browser if app not installed).
+
+### Mobile Implementation Strategy
+
+**Attempt App Scheme First:** Check if Discord installed on device. If yes, use app scheme. If no, use web scheme.
+
+**Fallback Handling:** Web scheme opens browser and displays channel in web interface.
+
+### UI States by Channel Type
+
+**Squad Team Channels:**
+- Button always enabled after squad creation
+- Button text: "Join Team Chat"
+
+**Match Coordination Rooms:**
+- Before lineups submitted: Button disabled
+- Waiting for opponent: Button disabled
+- Both lineups submitted: Button enabled
+- Channel creation failed: Button shows error state
+
+**Transfer Market Channels:**
+- Button enabled after channel created during transfer initiation
+- Button text: "Join Negotiation Chat"
+
+### Deep Link Security
+
+**Access Validation:** Backend only returns channel ID if user has permission to access channel. Frontend hides button if channel ID not present in response.
+
+**Permission Check Logic:**
+- Squad team channels: User must be current squad member
+- Match coordination rooms: User must be Captain or Vice Captain of participating squad
+- Transfer market channels: User must be Captain or player involved in transfer
+
+---
+
+## ADMIN MODERATION
+
+### Admin Role and Access
+
+**Purpose:** Admins need access to all channels for dispute resolution, rule enforcement, and general moderation.
+
+**Automatic Assignment:** When any channel created (squad team, match coordination, transfer market), admin automatically included in permissions.
+
+**Admin Permission Set:** Can view channel, send messages, and manage messages (delete or pin content).
+
+**Multiple Admins:** System supports multiple admin users. Store admin Discord User IDs in configuration. When creating channel, include all admins in permissions.
+
+### Moderation Scenarios by Channel Type
+
+**Squad Team Channels:**
+- Monitor for inappropriate behavior or harassment
+- Enforce platform rules and community guidelines
+- Mediate internal squad conflicts if reported
+
+**Match Coordination Rooms:**
+- Oversee match coordination process
+- Review video evidence for disputes
+- Verify submitted match results against video proof
+- Post official rulings on disputed results
+
+**Transfer Market Channels:**
+- Monitor negotiations for rule violations
+- Prevent harassment or unfair pressure tactics
+- Enforce transfer market rules
+
+### Dispute Resolution Workflow
+
+**Dispute Submission:** Players upload video evidence directly in Discord match coordination channel using Discord's file upload. Tag admin in message for visibility. Discord notification alerts admin.
+
+**Admin Review:** Admin opens Discord, navigates to channel, watches uploaded video in Discord, reviews chat history for context in Discord, determines outcome based on game rules.
+
+**Result Recording:** Admin returns to SQUADZ app and enters dispute resolution decision via admin dashboard. Database stores dispute outcome and admin decision text only (not video or chat). Decision entered in app creates permanent record.
+
+**Critical Separation:** Video evidence and chat discussion remain only in Discord. Admin reviews content in Discord but does not download or save it. Admin only enters final decision and outcome in SQUADZ app. No Discord content (messages, files, videos) is transferred to or stored in SQUADZ servers.
+
+---
+
+## CHANNEL LIFECYCLE AND CLEANUP
+
+### Retention Strategy
+
+**Squad Team Channels:**
+- **Retention:** Indefinite. Remains active as long as squad exists.
+- **Deletion Trigger:** Squad dissolved (Captain folds squad) OR all members leave
+
+**Match Coordination Rooms:**
+- **Retention:** 7 days after match completion
+- **Deletion Trigger:** Automated job identifies matches completed more than 7 days ago
+
+**Transfer Market Channels:**
+- **Retention:** Until transfer finalized OR 7-day negotiation timeout
+- **Deletion Trigger:** Transfer accepted/rejected OR 7 days of inactivity
+
+### Cleanup Implementation
+
+**Scheduling:** Daily cron job at midnight UTC.
+
+**Deletion Process:** 
+1. Job queries database for expired records:
+   - Match coordination rooms: completed more than 7 days ago, not already deleted
+   - Transfer market channels: transfer finalized or 7+ days old, not already deleted
+   - Squad team channels: squad dissolved or no members, not already deleted
+2. For each expired record, call Discord API to delete channel
+3. If successful, update database with deletion flag and timestamp
+4. If fails, log error but mark as deleted anyway (prevents continuous retry)
+
+**Error Handling:** If deletion request fails (channel already deleted manually, bot lost permissions, Discord API down), log error but mark as deleted in database. Admin can manually investigate failures.
+
+**Rate Limiting Consideration:** If deleting many channels simultaneously, implement batching to respect Discord rate limits. Process channels in batches with delays between batches.
+
+**User Notification:** No notification sent when channels deleted. Welcome message at creation already states retention policy. If user tries opening deleted channel via deep link, Discord shows "channel not found" error. SQUADZ app can hide deep link button after expiration period.
+
+**Critical Note on Data Storage:** SQUADZ does not save, archive, or backup any Discord chat content. All messages, uploaded files (video evidence, screenshots, FC25 attributes), and chat history exist only in Discord. When channels are deleted, all content is permanently removed. SQUADZ only stores business data (match results, dispute outcomes, admin decisions) entered in the app, not Discord chat content.
+
+---
+
+## ERROR HANDLING STRATEGIES
+
+### OAuth Error Scenarios
+
+| Error | Cause | Action |
+|-------|-------|--------|
+| `access_denied` | User cancelled authorization | Show message explaining cancellation, allow immediate retry |
+| `invalid_grant` | Authorization code expired (>10 min) | Show expiration message, allow retry with fresh OAuth flow |
+| `invalid_client` | Wrong CLIENT_ID or CLIENT_SECRET | Log error with high priority, admin must fix environment variables |
+| `redirect_uri_mismatch` | Redirect URI doesn't match Discord app settings | Log error, admin must update Discord app or environment variable |
+
+### Bot API Error Scenarios
+
+| Code | Meaning | Root Cause | Action |
+|------|---------|------------|--------|
+| 401 | Unauthorized | Invalid or expired BOT_TOKEN | Regenerate token in Discord Developer Portal, update environment variable |
+| 403 | Forbidden | Bot lacks required permissions | Check bot role in Discord server, verify Manage Channels permission, may need to re-invite bot |
+| 404 | Not Found | Incorrect GUILD_ID or bot not in server | Verify guild ID, check bot in member list, use invite URL if missing |
+| 429 | Rate Limited | Exceeded Discord API rate limits | Implement retry with exponential backoff, respect Retry-After header |
+| 500+ | Server Error | Discord API experiencing issues | Retry once after delay, likely temporary Discord outage |
+
+### Retry Strategy
+
+**Exponential Backoff Pattern:** First failure, wait 1 second, retry. Second failure, wait 2 seconds, retry. Third failure, wait 4 seconds, final retry. After third failure, give up. Log error with full context.
+
+**Idempotency Consideration:** Channel creation can be idempotent with deterministic names. If retry creates duplicate channel, identify by name pattern. Consider checking if channel exists before creating.
+
+**Queue-Based Retry:** For background jobs (channel creation after lineup submission), use job queue retry mechanism. Configure job with maximum retry attempts and backoff strategy.
+
+### Critical Failure Handling by Channel Type
+
+**Squad Team Channel Creation Failure:**
+- **Impact:** High. Squad cannot function without team chat.
+- **Action:** Rollback squad creation. Return error to Captain. Captain must retry entire squad creation.
+
+**Match Coordination Room Creation Failure:**
+- **Impact:** High. Match cannot proceed without coordination space.
+- **Action:** Mark match as "Channel Creation Failed" status. Show error to both Captains. Block match progression. Admin must investigate and manually resolve.
+
+**Transfer Market Channel Creation Failure:**
+- **Impact:** Medium. Transfer negotiations blocked.
+- **Action:** Rollback transfer interest. Return error to Captain. Captain can retry transfer initiation.
+
+---
+
+## SECURITY BEST PRACTICES
+
+### Token Security
+
+**Access Token Storage:** Never send Discord access tokens to frontend. Store encrypted in database. Encrypt before saving, decrypt only when making Discord API calls. Encryption key stored in environment variable. Backend-only access.
+
+**Token Rotation:** Access tokens expire after 7 days. Implement refresh token flow if storing tokens long-term. Before making Discord API call, check if token expired. If expired, use refresh token to obtain new access token. Transparent to user.
+
+**Bot Token Protection:** Bot token is permanent and highly privileged. Never log bot token. Never commit to Git. Rotate immediately if compromised. Access restricted to backend server only. Frontend never sees bot token.
+
+**State Parameter Validation:** OAuth state parameter prevents CSRF attacks. Generate random value when initiating OAuth flow. Store in session or short-lived database record. When Discord redirects to callback, validate state matches. If mismatch, reject request.
+
+### Permission Validation
+
+**Before Channel Access:** When showing deep link button, validate user has permission to access channel. Backend checks user role and squad membership. If unauthorized, don't return channel ID. Frontend hides button. Prevents unauthorized users from discovering channel URLs.
+
+**Before Channel Creation:** Validate all required participants have Discord connected. For squad team channels, check Captain connection. For match rooms, check both Captains. For transfer channels, check Captain and player connections. If any missing, return error.
+
+**Channel Permission Overwrites:** When adding users to channel permissions, validate Discord User ID exists and belongs to expected player. Prevent accidental addition of wrong users. Double-check guild ID matches expected server. Misconfigured permissions could leak sensitive information.
+
+### Rate Limiting
+
+**Discord API Limits:** Global rate limit across all endpoints. Per-route limits vary by endpoint type.
+
+**Request Queue Strategy:** Implement request queue for Discord API calls. Queue processes requests sequentially with small delays.
+
+**User-Facing Rate Limiting:** Prevent abuse by rate limiting user actions that trigger Discord API calls. Limit squad creation attempts per user per day. Limit transfer initiation attempts per user per hour.
+
+---
+
+## EXTERNAL DOCUMENTATION
+
+**Discord API Documentation:** https://discord.com/developers/docs - Complete API reference, OAuth documentation, bot setup guides, permission calculator, rate limiting details, error code reference.
+
+**Discord OAuth Guide:** https://discord.com/developers/docs/topics/oauth2 - OAuth 2.0 implementation details, scope definitions, token endpoint specifications, security best practices.
+
+**Discord Bot Guide:** https://discord.com/developers/docs/topics/bot-accounts - Bot creation, permissions, intents, best practices for automated accounts.
+
+**Discord Permission Calculator:** https://discordapi.com/permissions.html - Calculate permission bitmasks, validate permission combinations, understand permission hierarchy.
+
+---
+
+## RELATED DOCUMENTATION
+
+**prd.mdc:** Product requirements document. Defines Discord feature requirements, user stories for match coordination and team communication, dispute resolution workflows, business rules for user roles and permissions, squad team channel requirements, transfer market communication flows.
+
+**tech-stack.mdc:** Technology stack documentation. Explains why Discord chosen over building chat infrastructure, clarifies WebSocket usage (data sync only, not chat), defines integration architecture, separates communication from tournament management.
+
+**game-rules.mdc:** Business rules and validation logic. Specifies Discord connection requirements during account setup, channel access rules by role, squad membership and channel participation rules, transfer market communication guidelines.
+
+**db-schema.mdc:** Database schema and relationships. Documents Discord-related fields in player, squad, match, and transfer tables (User ID, username, channel IDs, timestamps). Defines relationships and constraints for channel lifecycle tracking.
+
+**backend-structure.mdc:** API endpoints and backend architecture. Lists Discord OAuth endpoints, channel management endpoints, webhook handlers, error response formats, authentication requirements, channel lifecycle job specifications.
+
+**auth-strategy.mdc:** Authentication implementation. Explains how Discord OAuth integrates with existing JWT authentication system during account setup, token storage strategy, session management, security considerations for Discord integration.

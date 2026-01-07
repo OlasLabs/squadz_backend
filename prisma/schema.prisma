@@ -1,0 +1,1284 @@
+// ===========================================
+// SQUADZ Database Schema
+// ===========================================
+// Complete schema for SQUADZ backend (NestJS + Prisma + PostgreSQL)
+// Contains all 28+ tables, enums, relationships, and indexes
+// Reference: docs/core/db-schema.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===========================================
+// ENUMS
+// ===========================================
+
+enum AuthProvider {
+  EMAIL_PASSWORD
+  GOOGLE
+  APPLE
+}
+
+enum UserRole {
+  USER
+  PLAYER
+  VICE_CAPTAIN
+  CAPTAIN
+  ADMIN
+}
+
+enum SubscriptionTier {
+  BASIC
+  PRO
+  PREMIUM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  GRACE_PERIOD
+  EXPIRED
+  CANCELLED
+}
+
+enum Platform {
+  IOS
+  ANDROID
+}
+
+enum Position {
+  GK
+  RB
+  CB
+  LB
+  RWB
+  LWB
+  CDM
+  CM
+  CAM
+  RM
+  LM
+  RW
+  LW
+  ST
+  CF
+  SS
+}
+
+enum Grade {
+  D
+  C
+  B
+  A
+}
+
+enum ContractType {
+  INIT_CONTRACT
+  COMP_CONTRACT
+}
+
+enum ContractStatus {
+  PENDING
+  ACTIVE
+  DECLINED
+  TERMINATED
+  BROKEN
+}
+
+enum CompetitionType {
+  LEAGUE
+  CUP
+}
+
+enum CompetitionFormat {
+  KNOCKOUT
+  ROUND_ROBIN
+  LEAGUE_AND_KNOCKOUT
+}
+
+enum CompetitionStatus {
+  UPCOMING
+  REGISTRATION_OPEN
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum RegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum MatchType {
+  LEAGUE
+  CUP
+  FRIENDLY
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LINEUP_SUBMITTED
+  READY
+  LIVE
+  DONE
+  RESULT_SUBMITTED
+  VERIFIED
+  COMPLETED
+  FORFEIT
+}
+
+enum MatchSide {
+  HOME
+  AWAY
+}
+
+enum DisputeStatus {
+  NONE
+  PENDING
+  RESOLVED
+}
+
+enum TransferPoolStatus {
+  FREE_AGENT
+  TRANSFER_LISTED
+}
+
+enum TransferRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+enum ChallengeDifficulty {
+  EASY
+  MEDIUM
+  DIFFICULT
+  SQUAD
+}
+
+enum ChallengeType {
+  MATCH_BASED
+  WEEKLY
+  SEASONAL
+}
+
+enum PlayerChallengeStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum XpSource {
+  MATCH_WIN
+  MATCH_DRAW
+  MATCH_LOSS
+  GOAL_SCORED
+  ASSIST
+  CLEAN_SHEET
+  MATCH_RATING_HIGH
+  MATCH_RATING_GOOD
+  FULL_MATCH
+  PARTIAL_MATCH
+  NO_FOULS
+  TACKLE
+  MVP
+  CHALLENGE_EASY
+  CHALLENGE_MEDIUM
+  CHALLENGE_DIFFICULT
+  CHALLENGE_SQUAD
+  TEAM_WIN_STREAK
+  TEAM_GOALS_WEEK
+  TEAM_CLEAN_SHEETS
+  TEAM_UNBEATEN
+}
+
+enum CoinTransactionType {
+  PURCHASE
+  CONTRACT_BREAK
+  TRANSFER_FEE
+  REGISTRATION
+  CHALLENGE_UNLOCK
+  CHALLENGE_REWARD
+  LATE_LINEUP
+  SQUAD_PASS
+  REFUND
+  ADMIN_CREDIT
+}
+
+enum SquadBankTransactionType {
+  CAPTAIN_DEPOSIT
+  CONTRACT_FEE_RECEIVED
+  TRANSFER_FEE_RECEIVED
+  REGISTRATION_FEE
+  LATE_LINEUP_FEE
+  SQUAD_PASS_PURCHASE
+  TRANSFER_FEE_PAID
+  PLAYER_REGISTRATION
+}
+
+enum CashTransactionType {
+  PRIZE_AWARDED
+  WITHDRAWAL_REQUESTED
+  WITHDRAWAL_COMPLETED
+  REFUND
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum NotificationType {
+  CONTRACT_OFFER
+  CONTRACT_ACCEPTED
+  CONTRACT_DECLINED
+  TRANSFER_REQUEST
+  TRANSFER_ACCEPTED
+  MATCH_REMINDER
+  LINEUP_DUE
+  MATCH_READY
+  RESULT_SUBMITTED
+  RESULT_VERIFIED
+  DISPUTE_CREATED
+  DISPUTE_RESOLVED
+  CHALLENGE_COMPLETE
+  XP_EARNED
+  GRADE_PROMOTED
+  SUBSCRIPTION_RENEWAL
+  SUBSCRIPTION_CANCELLED
+}
+
+enum ContactMethod {
+  GMAIL
+  WHATSAPP
+  TWITTER
+}
+
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ===========================================
+// CORE TABLES
+// ===========================================
+
+/// User accounts and player profiles
+model User {
+  id                    String    @id @default(cuid())
+  squadzId              String    @unique // Format: SQZ-XXXXXXXX
+  email                 String    @unique
+  passwordHash          String?   // Nullable for OAuth-only accounts
+  fullName              String
+  username              String    @unique // Alphanumeric + underscores
+
+  // OAuth Providers
+  authProvider          AuthProvider @default(EMAIL_PASSWORD)
+  googleId              String?   @unique
+  appleId               String?   @unique
+
+  // Email Verification
+  emailVerified         Boolean   @default(false)
+  emailVerificationOtp  String?
+  otpExpiresAt          DateTime?
+
+  // Password Reset
+  resetToken            String?
+  resetTokenExpiresAt   DateTime?
+
+  // Account Security
+  tokenVersion          Int       @default(0) // Increment to invalidate all tokens
+  failedLoginAttempts   Int       @default(0)
+  accountLockedUntil    DateTime?
+
+  // Role & Setup Status
+  role                  UserRole  @default(USER)
+  setupComplete         Boolean   @default(false)
+  setupPagesCompleted   Int       @default(0) // 0-4 tracking
+  page1Complete         Boolean   @default(false)
+  page2Complete         Boolean   @default(false)
+  page3Complete         Boolean   @default(false)
+  page4Complete         Boolean   @default(false)
+
+  // Account Setup Data (Page 1)
+  nationality           String?
+  currentLocation       String?
+  favoriteTeam          String?
+  psnId                 String?
+  knownAsName           String?   // Display name for cards, match facts, ratings
+
+  // Discord Connection (Account Setup Page 2 - Required)
+  discordUserId         String?   @unique
+  discordUsername       String?
+  discordConnectedAt    DateTime?
+
+  // Account Setup Data (Page 3)
+  primaryPosition       Position?
+  secondaryPosition     Position?
+
+  // Account Setup Data (Page 4)
+  avatarUrl             String?
+  avatarThumbnailUrl    String?
+
+  // XP & Progression
+  totalXp               Int       @default(0)
+  currentGrade          Grade     @default(D)
+
+  // Player Valuation (2-12 coins)
+  playerValuation       Int       @default(2)
+  valuationLastUpdated  DateTime  @default(now())
+
+  // Subscription (managed via App Store/Google Play)
+  subscriptionTier      SubscriptionTier @default(BASIC)
+  subscriptionStatus    SubscriptionStatus @default(ACTIVE)
+  subscriptionPlatform  Platform?
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean   @default(false)
+  gracePeriodEnd        DateTime?
+
+  // Coin Balance
+  coinBalance           Int       @default(0)
+
+  // Cash Balance (prize money, withdrawable to bank)
+  cashBalance           Decimal   @default(0)
+
+  // Timestamps
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  lastLoginAt           DateTime?
+
+  // Soft Delete
+  deletedAt             DateTime?
+
+  // Relations
+  refreshTokens         RefreshToken[]
+  contracts             Contract[]          @relation("PlayerContracts")
+  sentContracts         Contract[]          @relation("CaptainSentContracts")
+  captainSquads         Squad[]             @relation("SquadCaptain")
+  viceCaptainSquads     Squad[]             @relation("SquadViceCaptain")
+  playerCards           PlayerCard[]
+  customPlayerCards     CustomPlayerCard[]
+  attributeScreenshots  AttributeScreenshot[]
+  transferPoolEntries   TransferPoolEntry[]
+  transferRequests      TransferRequest[]   @relation("TransferRequestSender")
+  receivedTransfers     TransferRequest[]   @relation("TransferRequestReceiver")
+  matchParticipations   MatchParticipation[]
+  playerRatings         PlayerRating[]      @relation("RatingGiver")
+  receivedRatings       PlayerRating[]      @relation("RatingReceiver")
+  xpTransactions        XpTransaction[]
+  coinTransactions      CoinTransaction[]
+  cashTransactions      CashTransaction[]
+  challenges            PlayerChallenge[]
+  notifications         Notification[]
+  adminApplications     AdminApplication[]
+  memoryEdits           MemoryEdit[]
+  addedStreamLinks      StreamLink[]
+
+  @@index([email])
+  @@index([squadzId])
+  @@index([discordUserId])
+  @@index([subscriptionTier])
+  @@index([currentGrade])
+  @@index([role])
+}
+
+/// JWT refresh token management with version tracking
+model RefreshToken {
+  id             String   @id @default(cuid())
+  userId         String
+  tokenHash      String   @unique // Hashed token, never plain text
+  tokenVersion   Int      // Must match User.tokenVersion
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Team management with NonCompSquad/CompSquad state tracking
+model Squad {
+  id                 String      @id @default(cuid())
+  name               String
+  abbreviation       String      // 2-5 chars
+  slogan             String?
+  logoUrl            String
+
+  // Squad Type State
+  isCompSquad        Boolean     @default(false) // false = NonCompSquad, true = CompSquad
+
+  // Leadership
+  captainId          String
+  viceCaptainId      String?
+
+  // Squad Bank (shared coin wallet)
+  squadBankBalance   Int         @default(0)
+
+  // Roster Limits (5-14 players)
+  currentRosterSize  Int         @default(0)
+  maxRosterSize      Int         @default(14)
+
+  // Squad Invite Code
+  inviteCode         String      @unique // Format: SQD###-##
+
+  // Squad Formation
+  formation          String?     // e.g., "4-3-3", default squad formation
+
+  // Trophy Count
+  trophyCount        Int         @default(0) // Competitions won
+
+  // Discord Team Channel
+  discordChannelId   String?     @unique
+
+  // Timestamps
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  // Soft Delete
+  deletedAt          DateTime?
+
+  // Relations
+  captain            User        @relation("SquadCaptain", fields: [captainId], references: [id])
+  viceCaptain        User?       @relation("SquadViceCaptain", fields: [viceCaptainId], references: [id])
+  contracts          Contract[]
+  competitions       CompetitionRegistration[]
+  matches            MatchSquad[]
+  transferRequests   TransferRequest[]
+  bankTransactions   SquadBankTransaction[]
+  streamLinks        StreamLink[]
+
+  @@index([captainId])
+  @@index([viceCaptainId])
+  @@index([inviteCode])
+  @@index([isCompSquad])
+}
+
+/// Player-squad contracts with InitContract/CompContract distinction
+model Contract {
+  id                   String        @id @default(cuid())
+
+  // Contract Parties
+  playerId             String
+  squadId              String
+  captainId            String        // Captain who sent contract
+
+  // Contract Type
+  contractType         ContractType  // INIT_CONTRACT or COMP_CONTRACT
+
+  // Competition Context (CompContract only)
+  competitionId        String?
+
+  // Contract Terms
+  positions            Position[]    // Positions player can play
+  winningsSharePercent Decimal?      // Percentage of prize money (CompContract)
+  winningsShareAmount  Decimal?      // Calculated dollar amount
+  transferFee          Int?          // If Transfer Listed player
+  optionalNotes        String?
+
+  // Contract State
+  status               ContractStatus @default(PENDING)
+
+  // Acceptance Tracking
+  sentAt               DateTime      @default(now())
+  acceptedAt           DateTime?
+  declinedAt           DateTime?
+  terminatedAt         DateTime?
+
+  // Breaking Contract
+  breakFee             Int?          // Calculated on break (tier-based)
+  brokenAt             DateTime?
+
+  // Timestamps
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  // Relations
+  player               User          @relation("PlayerContracts", fields: [playerId], references: [id])
+  squad                Squad         @relation(fields: [squadId], references: [id])
+  captain              User          @relation("CaptainSentContracts", fields: [captainId], references: [id])
+  competition          Competition?  @relation(fields: [competitionId], references: [id])
+
+  @@index([playerId])
+  @@index([squadId])
+  @@index([competitionId])
+  @@index([status])
+  @@index([contractType])
+}
+
+/// League and cup tournament management
+model Competition {
+  id                  String             @id @default(cuid())
+  name                String
+  type                CompetitionType    // LEAGUE or CUP
+  format              CompetitionFormat  // KNOCKOUT, ROUND_ROBIN, etc.
+  region              String
+
+  // Prize Pool
+  totalPrizePool      Decimal
+  prizeDistribution   Json               // Array of {position, amount}
+
+  // Registration
+  entryFee            Int                // Coins
+  maxTeams            Int
+  registrationOpen    Boolean            @default(true)
+
+  // Schedule
+  startDate           DateTime
+  endDate             DateTime?
+
+  // Competition Rules
+  rulesUrl            String?
+  specificRules       Json?
+
+  // Status
+  status              CompetitionStatus  @default(UPCOMING)
+
+  // Banner & Branding
+  bannerImageUrl      String?
+  logoUrl             String?
+
+  // Admins
+  adminIds            String[]           // Array of admin User IDs
+
+  // Timestamps
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  // Relations
+  registrations       CompetitionRegistration[]
+  divisions           Division[]
+  matches             Match[]
+  contracts           Contract[]
+  transferWindows     TransferWindow[]
+
+  @@index([region])
+  @@index([status])
+  @@index([type])
+}
+
+/// Squad registration tracking with Sub-Ineligible player handling
+model CompetitionRegistration {
+  id                      String    @id @default(cuid())
+  competitionId           String
+  squadId                 String
+
+  // Registration Details
+  registeredBy            String    // Captain User ID
+  registrationFee         Int       // Entry fee paid
+
+  // Player Registration Tracking
+  registeredPlayerIds     String[]  // Player IDs registered for this competition
+  subIneligiblePlayerIds  String[]  // Players at tier competition limit
+
+  // Squad Pass Usage (one-time 6 coins per competition)
+  usedSquadPass           Boolean   @default(false)
+  squadPassPurchasedAt    DateTime?
+
+  // Vice Captain Requirement
+  viceCaptainId           String
+
+  // Status
+  status                  RegistrationStatus @default(PENDING)
+
+  // Timestamps
+  registeredAt            DateTime  @default(now())
+  approvedAt              DateTime?
+  rejectedAt              DateTime?
+
+  // Relations
+  competition             Competition @relation(fields: [competitionId], references: [id])
+  squad                   Squad     @relation(fields: [squadId], references: [id])
+
+  @@unique([competitionId, squadId]) // One registration per squad per competition
+  @@index([competitionId])
+  @@index([squadId])
+  @@index([status])
+}
+
+/// Competition divisions and league tables
+model Division {
+  id              String      @id @default(cuid())
+  competitionId   String
+  name            String      // e.g., "Division 1", "Premier League"
+  level           Int         // 1 = top tier
+
+  // Table Tracking
+  standings       Json        // Array of {squadId, played, won, drawn, lost, gf, ga, gd, points}
+
+  // Relations
+  competition     Competition @relation(fields: [competitionId], references: [id])
+  matches         Match[]
+
+  @@index([competitionId])
+}
+
+/// Match management with dual-captain verification workflow
+model Match {
+  id                    String       @id @default(cuid())
+  competitionId         String
+  divisionId            String?
+
+  // Match Type
+  matchType             MatchType    // LEAGUE, CUP, FRIENDLY
+
+  // Scheduled Time
+  scheduledTime         DateTime
+
+  // Match Status
+  status                MatchStatus  @default(SCHEDULED)
+
+  // Coordination Status
+  homeReadyAt           DateTime?
+  awayReadyAt           DateTime?
+  homeDoneAt            DateTime?
+  awayDoneAt            DateTime?
+
+  // Discord Match Room
+  discordChannelId      String?      @unique
+
+  // Result Submission Tracking
+  homeSubmittedAt       DateTime?
+  awaySubmittedAt       DateTime?
+
+  // Final Result
+  homeScore             Int?
+  awayScore             Int?
+  resultVerified        Boolean      @default(false)
+  verifiedAt            DateTime?
+
+  // Match Facts
+  matchFacts            Json?        // {goalscorers, assists, ratings, etc.}
+
+  // Dispute Tracking
+  disputeStatus         DisputeStatus @default(NONE)
+  disputeCategories     String[]     // ["goals", "assists", "scores", "lineup"]
+  disputeResolvedAt     DateTime?
+
+  // Timestamps
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  completedAt           DateTime?
+
+  // Relations
+  competition           Competition  @relation(fields: [competitionId], references: [id])
+  division              Division?    @relation(fields: [divisionId], references: [id])
+  squads                MatchSquad[]
+  lineups               MatchLineup[]
+  participations        MatchParticipation[]
+  ratings               PlayerRating[]
+  disputes              Dispute[]
+  streamLinks           StreamLink[]
+
+  @@index([competitionId])
+  @@index([status])
+  @@index([scheduledTime])
+}
+
+/// Join table for match participants (home/away squads)
+model MatchSquad {
+  id        String    @id @default(cuid())
+  matchId   String
+  squadId   String
+  side      MatchSide // HOME or AWAY
+
+  // Relations
+  match     Match     @relation(fields: [matchId], references: [id])
+  squad     Squad     @relation(fields: [squadId], references: [id])
+
+  @@unique([matchId, side]) // Each match has exactly 1 home and 1 away squad
+  @@index([matchId])
+  @@index([squadId])
+}
+
+/// Captain/Vice Captain lineup submissions
+model MatchLineup {
+  id                  String     @id @default(cuid())
+  matchId             String
+  squadId             String
+  submittedBy         String     // Captain or Vice Captain User ID
+
+  // Formation
+  formation           String     // e.g., "4-3-3"
+
+  // Player Selection
+  startingPlayerIds   String[]   // 11 player User IDs
+  substitutePlayerIds String[]   // Up to 3 player User IDs
+
+  // Submission Timing
+  submittedAt         DateTime   @default(now())
+  isLateSubmission    Boolean    @default(false)
+  lateFee             Int?       // 2 coins if late
+
+  // Relations
+  match               Match      @relation(fields: [matchId], references: [id])
+
+  @@unique([matchId, squadId]) // One lineup per squad per match
+  @@index([matchId])
+}
+
+/// Individual player participation tracking for XP/stats
+model MatchParticipation {
+  id                String   @id @default(cuid())
+  matchId           String
+  playerId          String
+  squadId           String
+
+  // Participation Type
+  isStarting        Boolean  @default(false)
+  minutesPlayed     Int      @default(0)
+
+  // Performance Stats
+  goals             Int      @default(0)
+  assists           Int      @default(0)
+  tackles           Int      @default(0)
+  fouls             Int      @default(0)
+  yellowCards       Int      @default(0)
+  redCards          Int      @default(0)
+
+  // Match Rating
+  matchRating       Decimal? // 0.0-10.0 scale
+
+  // Recognition
+  isMvp             Boolean  @default(false)
+  isCleanSheet      Boolean  @default(false) // Defenders/GKs only
+
+  // XP Earned
+  xpEarned          Int      @default(0)
+
+  // Relations
+  match             Match    @relation(fields: [matchId], references: [id])
+  player            User     @relation(fields: [playerId], references: [id])
+
+  @@unique([matchId, playerId])
+  @@index([playerId])
+  @@index([matchId])
+}
+
+/// Post-match player-to-player ratings
+model PlayerRating {
+  id              String   @id @default(cuid())
+  matchId         String
+  raterPlayerId   String   // Player giving rating
+  ratedPlayerId   String   // Player being rated
+
+  // Rating
+  rating          Decimal  // 0.0-10.0 scale
+
+  // XP Reward for Rater
+  xpEarned        Int      @default(1) // 1 XP for completing ratings
+
+  // Timestamp
+  createdAt       DateTime @default(now())
+
+  // Relations
+  match           Match    @relation(fields: [matchId], references: [id])
+  rater           User     @relation("RatingGiver", fields: [raterPlayerId], references: [id])
+  ratedPlayer     User     @relation("RatingReceiver", fields: [ratedPlayerId], references: [id])
+
+  @@unique([matchId, raterPlayerId, ratedPlayerId])
+  @@index([matchId])
+}
+
+/// Match result dispute tracking and resolution
+model Dispute {
+  id                String        @id @default(cuid())
+  matchId           String
+  initiatedBy       String        // Captain or Vice Captain User ID
+
+  // Dispute Details
+  categories        String[]      // ["goals", "assists", "scores", "lineup"]
+  description       String
+
+  // Evidence (uploaded to Discord)
+  evidenceUploaded  Boolean       @default(false)
+
+  // Discord Dispute Channel
+  discordChannelId  String?
+
+  // Resolution
+  status            DisputeStatus @default(PENDING)
+  resolvedBy        String?       // Admin User ID
+  resolution        String?
+  penaltyApplied    Boolean       @default(false)
+
+  // Timestamps
+  createdAt         DateTime      @default(now())
+  resolvedAt        DateTime?
+
+  // Relations
+  match             Match         @relation(fields: [matchId], references: [id])
+
+  @@index([matchId])
+  @@index([status])
+}
+
+/// Match livestream URL management (max 2 per squad per match)
+model StreamLink {
+  id          String   @id @default(cuid())
+  matchId     String
+  squadId     String   // Which squad added this link
+  addedById   String   // Captain/Vice Captain who added it
+  url         String   // Stream URL (Twitch, YouTube, etc.)
+  createdAt   DateTime @default(now())
+
+  // Relations
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  squad       Squad    @relation(fields: [squadId], references: [id])
+  addedBy     User     @relation(fields: [addedById], references: [id])
+
+  @@unique([matchId, squadId]) // Max 1 link per squad per match
+  @@index([matchId])
+}
+
+/// Transfer market listings with Free Agent/Transfer Listed status
+model TransferPoolEntry {
+  id                  String              @id @default(cuid())
+  playerId            String
+
+  // Pool Status
+  poolStatus          TransferPoolStatus  // FREE_AGENT or TRANSFER_LISTED
+
+  // Transfer Listed Details
+  listedBySquadId     String?
+  listedByCaptainId   String?
+  transferFee         Int?                // Player valuation at time of listing
+
+  // Player Preferences
+  preferredPosition   Position
+  secondaryPosition   Position?
+  contractType        ContractType        // Preferred contract type
+  openToViceCaptain   Boolean             @default(false)
+  enableDiscordContact Boolean            @default(true)
+
+  // Timestamps
+  enteredPoolAt       DateTime            @default(now())
+  exitedPoolAt        DateTime?
+
+  // Relations
+  player              User                @relation(fields: [playerId], references: [id])
+
+  @@index([playerId])
+  @@index([poolStatus])
+}
+
+/// Captain-to-player transfer negotiation tracking
+model TransferRequest {
+  id                  String                @id @default(cuid())
+
+  // Transfer Parties
+  sendingCaptainId    String
+  receivingPlayerId   String
+  targetSquadId       String                // Squad captain wants player for
+
+  // Current Squad (if Transfer Listed)
+  currentSquadId      String?
+
+  // Transfer Terms
+  transferFee         Int?                  // If Transfer Listed player
+  signingFee          Int                   // 0 for Free Agent, valuation for Transfer Listed
+  registrationFee     Int                   @default(2) // 2 coins
+  totalCost           Int                   // transferFee + signingFee + registrationFee
+
+  // Discord Negotiation Channel
+  discordChannelId    String?               @unique
+
+  // Request State
+  status              TransferRequestStatus @default(PENDING)
+
+  // Timestamps
+  sentAt              DateTime              @default(now())
+  acceptedAt          DateTime?
+  declinedAt          DateTime?
+  cancelledAt         DateTime?
+
+  // Relations
+  sendingCaptain      User                  @relation("TransferRequestSender", fields: [sendingCaptainId], references: [id])
+  receivingPlayer     User                  @relation("TransferRequestReceiver", fields: [receivingPlayerId], references: [id])
+  targetSquad         Squad                 @relation(fields: [targetSquadId], references: [id])
+
+  @@index([sendingCaptainId])
+  @@index([receivingPlayerId])
+  @@index([status])
+}
+
+/// Competition-specific transfer windows (2× per season)
+model TransferWindow {
+  id              String      @id @default(cuid())
+  competitionId   String
+
+  // Window Period
+  startDate       DateTime
+  endDate         DateTime
+
+  // Status
+  isActive        Boolean     @default(false)
+
+  // Relations
+  competition     Competition @relation(fields: [competitionId], references: [id])
+
+  @@index([competitionId])
+  @@index([isActive])
+}
+
+/// Auto-generated player cards (Basic tier)
+model PlayerCard {
+  id                String    @id @default(cuid())
+  playerId          String
+
+  // Card Design
+  position          Position
+  backgroundColor   String    // Based on grade/tier
+
+  // Stats Display
+  overallRating     Int       // Player valuation
+  stats             Json      // {goals, assists, matches, rating, pac, sho, pas, dri, def, phy}
+
+  // Tier Badge
+  tierBadge         String?   // Pro/Premium badge
+
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  player            User      @relation(fields: [playerId], references: [id])
+
+  @@index([playerId])
+}
+
+/// User-uploaded custom player card designs (Pro/Premium)
+model CustomPlayerCard {
+  id                String    @id @default(cuid())
+  playerId          String
+
+  // Card Image
+  cardImageUrl      String
+  thumbnailUrl      String
+
+  // Position Context
+  position          Position  // Primary or secondary
+
+  // Tier Limits
+  slotNumber        Int       // 1 for Pro, 1-2 for Premium
+
+  // Approval
+  approved          Boolean   @default(false)
+  approvedBy        String?   // Admin User ID
+  approvedAt        DateTime?
+
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  player            User      @relation(fields: [playerId], references: [id])
+
+  @@unique([playerId, slotNumber])
+  @@index([playerId])
+}
+
+/// FC25 in-game attribute screenshots (optional, weekly upload limit)
+model AttributeScreenshot {
+  id                String    @id @default(cuid())
+  playerId          String
+
+  // Screenshot Image
+  screenshotUrl     String
+  thumbnailUrl      String
+
+  // Upload Tracking
+  uploadedAt        DateTime  @default(now())
+
+  // 7-Day Cooldown
+  nextUploadAllowed DateTime  // uploadedAt + 7 days
+
+  // Relations
+  player            User      @relation(fields: [playerId], references: [id])
+
+  @@index([playerId])
+  @@index([uploadedAt])
+}
+
+/// Audit trail for all XP earnings
+model XpTransaction {
+  id                String          @id @default(cuid())
+  playerId          String
+
+  // XP Details
+  amount            Int
+  source            XpSource        // MATCH_WIN, GOAL_SCORED, CHALLENGE_COMPLETE, etc.
+
+  // Context
+  matchId           String?
+  challengeId       String?
+  description       String?
+
+  // Balance Tracking
+  balanceBefore     Int
+  balanceAfter      Int
+
+  // Timestamp
+  createdAt         DateTime        @default(now())
+
+  // Relations
+  player            User            @relation(fields: [playerId], references: [id])
+
+  @@index([playerId])
+  @@index([source])
+  @@index([createdAt])
+}
+
+/// Audit trail for all coin movements
+model CoinTransaction {
+  id                String              @id @default(cuid())
+
+  // Transaction Parties
+  userId            String?             // Player wallet
+  squadId           String?             // Squad bank
+
+  // Transaction Details
+  amount            Int
+  transactionType   CoinTransactionType
+
+  // Payment Processing
+  platform          Platform?           // IOS or ANDROID (for purchases)
+  transactionId     String?             @unique // Receipt ID from App Store/Google Play
+
+  // Balance Tracking
+  balanceBefore     Int
+  balanceAfter      Int
+
+  // Context
+  description       String?
+  metadata          Json?               // {matchId, contractId, challengeId, etc.}
+
+  // Timestamp
+  createdAt         DateTime            @default(now())
+
+  // Relations
+  user              User?               @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([squadId])
+  @@index([transactionType])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
+/// Audit trail for squad bank operations
+model SquadBankTransaction {
+  id                String                    @id @default(cuid())
+  squadId           String
+
+  // Transaction Details
+  amount            Int
+  transactionType   SquadBankTransactionType
+
+  // Initiated By
+  initiatedBy       String                    // Captain User ID
+
+  // Balance Tracking
+  balanceBefore     Int
+  balanceAfter      Int
+
+  // Context
+  description       String?
+  metadata          Json?
+
+  // Timestamp
+  createdAt         DateTime                  @default(now())
+
+  // Relations
+  squad             Squad                     @relation(fields: [squadId], references: [id])
+
+  @@index([squadId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+/// Audit trail for cash/prize money movements (separate from coins)
+model CashTransaction {
+  id                String              @id @default(cuid())
+  userId            String
+
+  // Transaction Details
+  amount            Decimal
+  transactionType   CashTransactionType
+
+  // Balance Tracking
+  balanceBefore     Decimal
+  balanceAfter      Decimal
+
+  // Context
+  description       String?
+  metadata          Json?               // {competitionId, matchId, withdrawalMethod, etc.}
+
+  // Withdrawal Tracking
+  withdrawalStatus  WithdrawalStatus?   // PENDING, COMPLETED, FAILED (for withdrawals)
+
+  // Timestamp
+  createdAt         DateTime            @default(now())
+
+  // Relations
+  user              User                @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+/// Challenge templates (Easy/Medium/Difficult/Squad)
+model Challenge {
+  id                String              @id @default(cuid())
+
+  // Challenge Details
+  title             String
+  description       String
+  difficulty        ChallengeDifficulty // EASY, MEDIUM, DIFFICULT, SQUAD
+
+  // Rewards
+  xpReward          Int                 // 6, 10, 20, 10 based on difficulty
+  coinReward        Int?                // Medium = 1 coin, Difficult = 2 coins
+
+  // Challenge Type
+  challengeType     ChallengeType       // MATCH_BASED, WEEKLY, SEASONAL
+
+  // Validation Logic
+  validationRules   Json                // {metric, operator, threshold}
+
+  // Active Status
+  isActive          Boolean             @default(true)
+
+  // Timestamps
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  playerChallenges  PlayerChallenge[]
+
+  @@index([difficulty])
+  @@index([isActive])
+}
+
+/// Player's active/completed challenges
+model PlayerChallenge {
+  id                String                @id @default(cuid())
+  playerId          String
+  challengeId       String
+
+  // Activation
+  activatedAt       DateTime              @default(now())
+  activationCost    Int                   // 0 for Premium, 1 for Basic/Pro
+
+  // Status
+  status            PlayerChallengeStatus @default(ACTIVE)
+
+  // Progress Tracking
+  currentProgress   Int                   @default(0)
+  targetProgress    Int
+
+  // Completion
+  completedAt       DateTime?
+  xpAwarded         Int?
+  coinAwarded       Int?
+
+  // Relations
+  player            User                  @relation(fields: [playerId], references: [id])
+  challenge         Challenge             @relation(fields: [challengeId], references: [id])
+
+  @@index([playerId])
+  @@index([challengeId])
+  @@index([status])
+}
+
+/// Push notifications and in-app alerts
+model Notification {
+  id                String              @id @default(cuid())
+  userId            String
+
+  // Notification Details
+  type              NotificationType
+  title             String
+  message           String
+
+  // Deeplink
+  actionUrl         String?
+
+  // Attachments
+  attachments       Json?               // [{type, url, size}]
+
+  // Read Status
+  isRead            Boolean             @default(false)
+  readAt            DateTime?
+
+  // Timestamp
+  createdAt         DateTime            @default(now())
+
+  // Relations
+  user              User                @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+/// Player applications to become platform admin
+model AdminApplication {
+  id                String              @id @default(cuid())
+  playerId          String
+
+  // Application Answers
+  audienceSize      String              // "100+", "200+", "500+", "1000+"
+  squadCount        String              // "10+", "20+", "50+", "100+"
+  acceptsDiligence  Boolean
+  preferredContact  ContactMethod       // GMAIL, WHATSAPP, TWITTER
+
+  // Status
+  status            ApplicationStatus   @default(PENDING)
+
+  // Review
+  reviewedBy        String?             // Admin User ID
+  reviewedAt        DateTime?
+  reviewNotes       String?
+
+  // Timestamps
+  createdAt         DateTime            @default(now())
+
+  // Relations
+  player            User                @relation(fields: [playerId], references: [id])
+
+  @@index([playerId])
+  @@index([status])
+}
+
+/// User-controlled memory edits for Claude AI memory system
+model MemoryEdit {
+  id                String    @id @default(cuid())
+  userId            String
+
+  // Edit Content
+  editText          String    // User-provided memory edit (max 200 chars)
+  lineNumber        Int       // Position in user's memory list (1-30)
+
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  user              User      @relation(fields: [userId], references: [id])
+
+  @@unique([userId, lineNumber])
+  @@index([userId])
+}

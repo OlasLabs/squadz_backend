@@ -1,0 +1,286 @@
+# DEPLOYMENT CHECKLIST
+
+## DESCRIPTION
+
+Pre-deployment verification checklist for SQUADZ backend. Use this before every production deployment to ensure security, performance, and infrastructure readiness. A systematic review prevents common deployment issues and ensures production stability.
+
+**Purpose:**
+- Verify security best practices implemented
+- Confirm performance optimizations in place
+- Validate infrastructure configuration
+- Ensure safe production deployment
+
+**Related Docs:**
+- `testing-standards.mdc` - Test coverage verification
+- `backend-architecture.mdc` - Architecture patterns
+- `db-schema.mdc` - Database structure and migrations
+- `tech-stack.mdc` - Infrastructure and deployment setup
+
+---
+
+## HOW TO USE
+
+**Before Every Production Deployment:**
+1. Run through each section systematically
+2. Check off completed items
+3. Document any skipped items with justification
+4. Don't deploy if SECURITY items fail
+5. Address PERFORMANCE and INFRASTRUCTURE issues before next deployment
+
+**Priority Levels:**
+- **SECURITY:** Must pass - deployment blocker
+- **PERFORMANCE:** Should pass - degraded experience if skipped
+- **INFRASTRUCTURE:** Must pass - deployment blocker
+- **PRE-DEPLOYMENT VERIFICATION:** Must pass - final gate
+
+---
+
+## SECURITY
+
+### Authentication & Authorization
+
+- [ ] All endpoints have authentication (except public routes explicitly documented)
+- [ ] JWT tokens use secure secret (minimum 32 characters, environment variable)
+- [ ] Access tokens expire in 15 minutes
+- [ ] Refresh tokens expire in 30 days
+- [ ] Token version tracking works (invalidates all tokens on security events)
+- [ ] RBAC guards applied to protected routes (Captain-only, Player-only, Admin-only)
+- [ ] Setup completion guard on player features (prevents incomplete users accessing features)
+- [ ] Tier limit guards enforced (Basic/Pro/Premium restrictions)
+
+### Input Validation & Sanitization
+
+- [ ] All request DTOs use class-validator decorators
+- [ ] File upload validation (type, size, format)
+- [ ] Image uploads limited to: PNG, JPG, WEBP (max 10MB)
+- [ ] Username/squad name sanitized (alphanumeric + underscores only)
+- [ ] Email validation on all email fields
+- [ ] SQL injection prevention via Prisma parameterized queries (never raw SQL with user input)
+- [ ] XSS prevention: All user-generated content escaped in responses
+- [ ] Path traversal prevention on file operations
+
+### API Security
+
+- [ ] Rate limiting enabled globally (100 requests/minute per IP)
+- [ ] Rate limiting on auth endpoints (5 login attempts per 15 minutes)
+- [ ] CORS configured (whitelist: mobile app domains, claude.ai only)
+- [ ] API keys stored in environment variables (never in code)
+- [ ] Sensitive data excluded from error responses (no stack traces in production)
+- [ ] Account lockout after 5 failed login attempts (15-minute cooldown)
+
+### File Upload Security
+
+- [ ] File uploads go to S3 (never local filesystem)
+- [ ] Background removal via Removal.ai (validated server-side)
+- [ ] Avatar uploads size-limited (max 10MB)
+- [ ] Uploaded files scanned/validated before processing
+- [ ] Temporary upload files deleted after processing
+- [ ] S3 bucket permissions restrict public write access
+
+### Secrets Management
+
+- [ ] All API keys in environment variables
+- [ ] Database credentials in environment variables
+- [ ] Discord bot token secured (production bot, not dev bot)
+- [ ] Removal.ai API key (production key, not dev/test key)
+- [ ] Apple/Google payment credentials (production, not sandbox)
+- [ ] JWT secret strong and unique (never committed to Git)
+- [ ] AWS credentials use IAM roles (not hardcoded keys)
+- [ ] `.env` file not committed to repository
+- [ ] Production `.env` stored securely (1Password, AWS Secrets Manager, etc.)
+
+---
+
+## PERFORMANCE
+
+### Database Optimization
+
+- [ ] All foreign keys have indexes
+- [ ] Indexes on frequently filtered fields (status, type, createdAt, email, squadzId)
+- [ ] Indexes on fields used in WHERE clauses
+- [ ] No N+1 queries (use Prisma `include` strategically)
+- [ ] Pagination on all list endpoints (limit/offset or cursor-based)
+- [ ] Connection pooling configured (20-50 connections for production)
+- [ ] Database query performance tested (critical queries < 100ms)
+
+### API Performance
+
+- [ ] Response times acceptable (< 500ms for most endpoints)
+- [ ] File upload endpoints optimized (use streams, not memory buffers)
+- [ ] Large responses paginated (matches, competitions, leaderboards)
+- [ ] Heavy computations cached where appropriate
+- [ ] Expensive operations moved to background jobs (BullMQ)
+
+### Resource Limits
+
+- [ ] File upload size limits enforced (10MB for images)
+- [ ] Request body size limits configured (1MB default)
+- [ ] Timeout limits on external API calls (Discord, Removal.ai: 30s timeout)
+- [ ] Database query timeout configured (30s max)
+- [ ] Memory limits monitored (prevent memory leaks)
+
+---
+
+## INFRASTRUCTURE
+
+### Environment & Configuration
+
+- [ ] Production environment variables configured in AWS Elastic Beanstalk
+- [ ] `NODE_ENV=production` set
+- [ ] Database URL points to production RDS instance
+- [ ] All secrets stored as environment variables (not in code)
+- [ ] CORS whitelist configured for production domains
+- [ ] Rate limiting thresholds appropriate for production load
+- [ ] SSL/HTTPS enabled (no HTTP in production)
+- [ ] Health check endpoint responding (`/health` or `/`)
+
+### Production Credentials
+
+- [ ] Discord production bot token configured (not dev bot)
+- [ ] Discord OAuth uses production app credentials
+- [ ] Removal.ai production API key configured (not dev/test)
+- [ ] Apple In-App Purchase production credentials
+- [ ] Google Play production credentials
+- [ ] AWS S3 production bucket configured (not dev bucket)
+- [ ] Database points to production RDS (not local/dev)
+- [ ] All external services using production endpoints
+
+### Database & Data
+
+- [ ] Latest migrations applied to production database
+- [ ] Migration rollback plan documented
+- [ ] Database backup automated (daily snapshots enabled)
+- [ ] Backup restoration tested recently (within 30 days)
+- [ ] Transaction patterns implemented for financial operations
+- [ ] Idempotency working for payment processing (duplicate receipts rejected)
+- [ ] Soft deletes implemented for Users and Squads
+- [ ] Audit trails enabled (XpTransaction, CoinTransaction, SquadBankTransaction)
+
+### Monitoring & Recovery
+
+- [ ] CloudWatch logging configured and working
+- [ ] Sentry error tracking active (errors reported to dashboard)
+- [ ] PostHog analytics tracking enabled
+- [ ] Health checks passing (application responding correctly)
+- [ ] Monitoring dashboard accessible (CloudWatch, Sentry)
+- [ ] Alert thresholds configured (error rate, response time, CPU, memory)
+- [ ] Rollback procedure documented and tested
+- [ ] Blue-green deployment ready (zero-downtime rollback)
+
+### Third-Party Service Configuration
+
+- [ ] Discord Bot API connected and functional
+- [ ] Discord OAuth flow working (test account connection)
+- [ ] Removal.ai API accessible (test background removal)
+- [ ] Apple StoreKit receipt verification working
+- [ ] Google Play receipt verification working
+- [ ] AWS S3 uploads working (test file upload)
+- [ ] Expo push notifications configured (test notification send)
+- [ ] All external API calls have timeout and retry logic
+
+---
+
+## PRE-DEPLOYMENT VERIFICATION
+
+### Final Checks
+
+- [ ] All tests passing (unit + E2E)
+- [ ] Production build successful (`npm run build` completes without errors)
+- [ ] Environment variables verified (all required vars present in production)
+- [ ] Database migrations dry-run successful (no conflicts)
+- [ ] Manual smoke test of critical user flow completed:
+  - [ ] User registration and login works
+  - [ ] Squad creation works
+  - [ ] Contract sending and acceptance works
+  - [ ] Match creation and result submission works
+  - [ ] Coin purchase verification works
+
+### Deployment Readiness
+
+- [ ] Recent production backup verified (database snapshot exists)
+- [ ] Rollback plan ready (documented steps, previous version tagged)
+- [ ] Team notified of deployment window
+- [ ] Monitoring dashboard open and ready
+- [ ] Off-hours deployment scheduled (low traffic period)
+
+### Post-Deployment Verification
+
+**Immediately After Deployment:**
+- [ ] Health check responding (GET `/health` returns 200)
+- [ ] Critical endpoints responding (auth, squads, matches)
+- [ ] Database migrations applied successfully
+- [ ] No errors in CloudWatch logs (first 5 minutes)
+- [ ] No errors in Sentry (first 5 minutes)
+- [ ] External APIs accessible (Discord, Removal.ai, payments)
+
+**Within 1 Hour:**
+- [ ] User flows working (test account signup, login, squad creation)
+- [ ] Push notifications working
+- [ ] Background jobs processing (BullMQ queues active)
+- [ ] Response times acceptable (< 500ms average)
+
+**Rollback Triggers:**
+- [ ] Error rate > 5% in first 15 minutes
+- [ ] Critical endpoint failing (auth, matches)
+- [ ] Database migration failed
+- [ ] External API integration broken
+
+---
+
+## CRITICAL REMINDERS
+
+**Never Deploy Without:**
+- ✅ All SECURITY items passing
+- ✅ All INFRASTRUCTURE items passing
+- ✅ All PRE-DEPLOYMENT VERIFICATION items passing
+- ✅ Recent backup verified
+- ✅ Rollback plan ready
+
+**Deployment Safety:**
+- Deploy during low-traffic hours (evenings, weekends)
+- Monitor for 1 hour post-deployment
+- Keep rollback plan accessible
+- Have monitoring dashboard open
+
+**When in Doubt:**
+- Don't deploy
+- Fix issues first
+- Test thoroughly
+- Deploy when confident
+
+---
+
+## COMMON ISSUES CHECKLIST
+
+**If deployment fails, verify:**
+- [ ] Environment variables match production requirements
+- [ ] Database migrations compatible with current schema
+- [ ] External API credentials correct (production, not dev)
+- [ ] CORS whitelist includes mobile app domains
+- [ ] SSL certificates valid and not expired
+- [ ] Port configuration correct (443 for HTTPS)
+- [ ] Health check endpoint responding
+
+**If performance degrades:**
+- [ ] Check database connection pool exhaustion
+- [ ] Check for N+1 queries in new code
+- [ ] Verify indexes on new query fields
+- [ ] Check external API response times
+- [ ] Monitor memory usage for leaks
+
+**If external integrations fail:**
+- [ ] Verify production API keys configured
+- [ ] Check API endpoint URLs (prod vs dev)
+- [ ] Verify network connectivity to external services
+- [ ] Check timeout configurations
+- [ ] Validate credentials not expired
+
+---
+
+## RELATED DOCUMENTATION
+
+- **testing-standards.mdc** - Verify test coverage before deployment
+- **backend-architecture.mdc** - Understand module dependencies
+- **db-schema.mdc** - Review migration impact
+- **tech-stack.mdc** - Infrastructure and deployment setup
+- **game-rules.mdc** - Validate business logic implementation

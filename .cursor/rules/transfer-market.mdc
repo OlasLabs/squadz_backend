@@ -1,0 +1,269 @@
+---
+globs: src/transfers/**/*.*, src/contracts/**/*.*, test/transfers.e2e-spec.ts
+alwaysApply: false
+---
+
+# Transfer Market Flow
+
+## Description
+
+Defines the business logic, constraints, and decision flows for SQUADZ's app transfer market system. Use this as the authoritative source for implementing transfer-related features, validation rules, and state transitions.
+
+
+## Core Constraints
+
+### Squad Eligibility
+- **Same Continent Rule**: Transfer transactions only occur between squads in the same continent
+- **Competition Placement**: Squads may be in different competitions/divisions within the same continent
+
+### Player Actions
+- **Self-Listing Only**: Players can request transfer listing; Captains CANNOT force-list players
+- **Exception**: Captains can transfer-list players for free (captain privilege)
+
+### Contract Breaking Restrictions
+- **Competition Lock**: Players who break contracts are BLOCKED from joining another squad in the same competition until competition ends
+- **Cross-Competition Allowed**: Contract breakers can join squads in different competitions immediately
+
+### Free Agent Rules
+- **Zero Signing Fees**: Free agents (who paid to break contract) join new squads with NO signing fees
+- **Pool Entry**: Free agents can enter transfer pool without payment
+
+---
+
+## User Tier Permissions
+
+### Standard Users
+- Can transfer within continent only
+- Pay 100% player valuation to break contract
+- Pay 100% signing fees when accepting transfers
+
+### Premium Users
+- Can join worldwide transfer pool (cross-continent visibility)
+- Pay 50% player valuation to break contract
+- Pay 50% signing fees when accepting transfers
+- Exclusive access to worldwide pool listings
+
+---
+
+## Transfer Pool Logic
+
+### Pool Composition
+- **Default View**: Shows players from same continent
+- **Worldwide Pool**: Premium users from other continents (Premium users only)
+- **Highlighted Status**: Transfer-listed players appear with special indicator
+
+### Visibility Rules
+- Only players in active transfer pool can be involved in transfers
+- Standard users see continent-specific pool by default
+- Premium users can toggle worldwide pool filter
+
+---
+
+## Decision Flows
+
+### Flow 1: Player Breaks Contract
+
+**Entry Condition**: Player is currently under contract with a squad
+
+**Decision Tree**:
+```
+1. Player initiates break request
+   └─> Calculate fee based on user tier
+       ├─> Standard: 100% of player valuation
+       └─> Premium: 50% of player valuation
+
+2. Present payment confirmation
+   ├─> User declines → CANCEL (remain in squad)
+   └─> User confirms → Check balance
+       ├─> Insufficient → Redirect to Buy Coins → Return to confirmation
+       └─> Sufficient → EXECUTE break
+
+3. Execute contract break
+   ├─> Deduct fee from player's personal balance
+   ├─> Credit fee to squad's balance
+   ├─> Set player_status = 'FREE_AGENT'
+   ├─> Set contract_broken = TRUE
+   ├─> Remove from squad roster
+   └─> Add to Free Agent pool
+```
+
+**Post-Condition**: 
+- Player is Free Agent
+- Can join transfer pool for free
+- CANNOT join same competition squads until competition ends
+
+---
+
+### Flow 2: Free Agent Joins Squad
+
+**Entry Condition**: Player status is 'FREE_AGENT' (already paid break fee)
+
+**Decision Tree**:
+```
+1. Captain initiates transfer for Free Agent
+   └─> System sends contract offer (signing_fee = 0)
+
+2. Free Agent receives notification
+   ├─> Declines → Remain in transfer pool
+   └─> Accepts → Check competition eligibility
+       ├─> Same competition + contract_broken = TRUE → REJECT
+       └─> Different competition OR contract_broken = FALSE → EXECUTE
+
+3. Execute transfer
+   ├─> Add to new squad roster
+   ├─> Remove from Free Agent pool
+   ├─> Set player_status = 'ACTIVE'
+   └─> Update current_squad_id
+```
+
+**Post-Condition**: 
+- Player joins squad
+- NO coins deducted from squad balance
+- Free agent pool updated
+
+---
+
+### Flow 3: Contracted Player Transfer
+
+**Entry Condition**: 
+- Captain A has free squad position
+- Player B is under contract with Squad B
+
+**Decision Tree**:
+```
+1. Captain A initiates transfer for Player B
+   └─> Calculate signing fee
+       ├─> Standard users: 100% of player valuation
+       └─> Premium users: 50% of player valuation
+
+2. Send contract offer to Player B
+   └─> Captain B receives notification (squad losing player)
+
+3. Dual agreement required
+   ├─> Either party declines → CANCEL (notify Captain A)
+   └─> Both accept → Proceed to confirmation
+
+4. Final confirmation by Captain A
+   ├─> Choose to cancel → CANCEL transfer
+   └─> Confirm → Check squad balance
+       ├─> Insufficient → Redirect to Buy Coins → Return to confirmation
+       └─> Sufficient → EXECUTE transfer
+
+5. Execute transfer
+   ├─> Deduct signing fee from Squad A balance
+   ├─> Credit signing fee to Squad B balance
+   ├─> Remove Player B from Squad B roster
+   ├─> Add Player B to Squad A roster
+   └─> Send notifications to all parties
+```
+
+**Post-Condition**: 
+- Player B moves to Squad A
+- Coins transferred from Squad A to Squad B
+- Rosters updated
+
+---
+
+## Validation Rules
+
+### Pre-Transfer Checks
+- **Squad Capacity**: Receiving squad must have available roster slot
+- **Balance Verification**: Squad must have sufficient coins before execution
+- **Competition Lock Check**: Verify player is not contract_broken + same competition
+- **Continent Match**: Validate both squads in same continent (except premium worldwide)
+
+### State Transitions
+```
+CONTRACTED → FREE_AGENT (via contract break)
+FREE_AGENT → ACTIVE (via squad join)
+CONTRACTED → CONTRACTED (via transfer between squads)
+```
+
+### Payment Calculations
+```
+Contract Break Fee = player_valuation × (user_tier === 'PREMIUM' ? 0.5 : 1.0)
+Signing Fee = player_valuation × (user_tier === 'PREMIUM' ? 0.5 : 1.0)
+Free Agent Signing Fee = 0 (always)
+```
+
+---
+
+## Notification Triggers
+
+### Contract Break
+- Notify: Player (confirmation), Current squad captain (player leaving)
+
+### Free Agent Transfer
+- Notify: Player (contract offer), New captain (status update)
+
+### Contracted Player Transfer
+- Notify: Player B (contract offer), Captain B (player being approached), Captain A (transfer status updates)
+
+---
+
+## Edge Cases
+
+### Insufficient Balance During Transfer
+- **Action**: Redirect to coin purchase flow
+- **Return Behavior**: Resume at payment confirmation step
+- **Cancel Option**: Available at all confirmation points
+
+### Multiple Transfer Attempts
+- **Rule**: Only one active transfer request per player at a time
+- **Handling**: New requests cancel/override pending requests
+
+### Competition End Scenario
+- **Contract Breakers**: Restriction lifts when competition status = 'COMPLETED'
+- **Pool Cleanup**: Remove inactive players from transfer pool
+
+### Worldwide Pool Access
+- **Validation**: Check user_tier = 'PREMIUM' before showing worldwide listings
+- **Filter State**: Persist user's pool filter preference
+
+---
+
+## Implementation Notes
+
+### Data Requirements
+
+For transfer market logic to function, the system must track:
+
+**Player State Tracking:**
+- Current player status (contracted, free agent, active)
+- Contract break flag (to enforce competition restrictions)
+- Previous competition reference (for cross-competition validation)
+- User tier (for fee calculation: 50% discount for premium)
+
+**Financial Tracking:**
+- Squad coin balance (for transfer fee validation)
+- Transfer request states (pending, accepted, rejected, cancelled)
+
+**Why These Matter:**
+- Contract break flag is CRITICAL - without it, competition restrictions cannot be enforced
+- Previous competition ID enables the "cannot rejoin same competition" rule
+- User tier affects ALL fee calculations (contract break + signing fees)
+
+> Refer to `db-schema.mdc` for exact field names and table structure.
+
+### Critical Business Rules
+1. Free agents NEVER pay signing fees (they already paid to break contract)
+2. Contract breakers CANNOT join same competition (check competition_id match)
+3. Premium users get 50% discount on ALL fees (break + signing)
+4. Squads must be in same continent unless using worldwide pool (premium only)
+
+### State Management
+- Lock player record during active transfer to prevent concurrent modifications
+- Validate all pre-conditions immediately before final execution
+- Use transactions for balance updates to ensure atomicity
+
+---
+
+## Related Documentation
+
+- **`game-rules.mdc`** - PRIMARY SOURCE - Complete business rules and validation logic (transfer market is a subset)
+- **`db-schema.mdc`** - Database schema, table structures, and field definitions
+- **`prd.mdc`** - Product requirements and feature specifications
+- **`player-valuation.mdc`** - Player valuation calculation logic (for transfer and contract fee calculations)
+- **`monetization.mdc`** - Coin transactions, balance management, and user tier system
+
+

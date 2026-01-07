@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQUADZ Account Temporarily Locked</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .header {
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+      color: #ffffff;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 600;
+    }
+    .content {
+      padding: 40px 30px;
+    }
+    .content h2 {
+      color: #333333;
+      margin-top: 0;
+      font-size: 22px;
+    }
+    .content p {
+      color: #555555;
+      line-height: 1.6;
+      margin: 15px 0;
+    }
+    .lockout-box {
+      background-color: #fff5f5;
+      border: 2px solid #ff6b6b;
+      border-radius: 8px;
+      padding: 25px;
+      text-align: center;
+      margin: 30px 0;
+    }
+    .lockout-time {
+      font-size: 24px;
+      font-weight: bold;
+      color: #ff6b6b;
+      margin: 10px 0;
+    }
+    .security-notice {
+      background-color: #e3f2fd;
+      border-left: 4px solid #2196f3;
+      padding: 15px 20px;
+      margin: 25px 0;
+      border-radius: 4px;
+    }
+    .security-notice p {
+      margin: 0;
+      color: #0d47a1;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .security-notice strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+    .security-notice ul {
+      margin: 10px 0;
+      padding-left: 20px;
+      color: #0d47a1;
+    }
+    .security-notice li {
+      margin: 5px 0;
+    }
+    .warning-box {
+      background-color: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 12px 20px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+    .warning-box p {
+      margin: 0;
+      color: #856404;
+      font-size: 14px;
+    }
+    .footer {
+      background-color: #f8f9fa;
+      padding: 20px 30px;
+      text-align: center;
+      color: #777777;
+      font-size: 12px;
+    }
+    .footer p {
+      margin: 5px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚠️ Account Locked</h1>
+    </div>
+    
+    <div class="content">
+      <h2>Your Account Has Been Temporarily Locked</h2>
+      <p>Your SQUADZ account has been temporarily locked due to multiple failed login attempts. This is a security measure to protect your account from unauthorized access.</p>
+      
+      <div class="lockout-box">
+        <p style="margin: 0 0 5px 0; font-size: 14px; color: #666;">Your account will automatically unlock at:</p>
+        <div class="lockout-time">{{unlockTime}}</div>
+        <p style="margin: 15px 0 0 0; font-size: 13px; color: #888;">(approximately {{lockoutMinutes}} minutes from now)</p>
+      </div>
+
+      <div class="warning-box">
+        <p>⏳ After this time, you'll be able to log in again. No action is required from your side.</p>
+      </div>
+
+      <div class="security-notice">
+        <p><strong>🔒 Security Advisory</strong></p>
+        <p>If you didn't attempt to log in, your account credentials may be compromised. We recommend:</p>
+        <ul>
+          <li>Change your password immediately after the lockout period</li>
+          <li>Enable two-factor authentication (if available)</li>
+          <li>Review your recent account activity</li>
+          <li>Contact support if you notice any suspicious activity</li>
+        </ul>
+        <p style="margin-top: 15px;">If you need immediate assistance, contact us at <strong>{{supportEmail}}</strong></p>
+      </div>
+
+      <p style="margin-top: 25px; font-size: 13px; color: #777;">This is an automated security notification. Please do not reply to this email.</p>
+    </div>
+
+    <div class="footer">
+      <p><strong>SQUADZ</strong> - FC25 Pro Clubs Tournament Management</p>
+      <p>© 2025 SQUADZ. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+

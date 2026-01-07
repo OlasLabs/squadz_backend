@@ -1,0 +1,623 @@
+---
+description: 'Build order roadmap across 3 milestones. Defines module dependencies, critical integration contracts, and implementation sequence. References authoritative docs for specifications—does not duplicate them.'
+alwaysApply: false
+---
+
+# IMPLEMENTATION GUIDE
+
+## DESCRIPTION
+
+Implementation roadmap for SQUADZ backend. Defines **WHEN** to build modules, **HOW** modules integrate, and **WHAT** critical patterns to follow. References authoritative documentation for all specifications.
+
+**This guide provides:** Build sequence, module dependencies, integration contracts, critical patterns
+**This guide does NOT provide:** Code snippets, field definitions, endpoint specs, DTO structures (see references below)
+
+**Authoritative References:**
+
+- **db-schema.mdc** - All table definitions, fields, relationships, indexes
+- **backend-architecture.mdc** - Module responsibilities, file structure, patterns
+- **api-requirements.mdc** - All endpoints, RBAC matrix, screen mappings
+- **auth-strategy.mdc** - Authentication flows, JWT structure, OAuth details
+- **game-rules.mdc** - Business rules, validation logic, constraints
+- **tech-stack.mdc** - Technology choices, packages, infrastructure
+- **testing-standards.mdc** - Test patterns, assertions, seed data
+- **deployment-checklist.mdc** - Production readiness verification
+
+---
+
+## MILESTONE OVERVIEW
+
+### **Milestone 1: Complete Auth Flow**
+
+**Goal:** User can register, verify email, complete 4-page setup, and become Player
+
+**Modules:** Auth, Users, Media, Notifications
+**Endpoints:** 11 auth endpoints + 5 user endpoints
+**Critical:** Complete schema first, then Auth → Users → Media → Notifications
+
+### **Milestone 2: All Feature Modules**
+
+**Goal:** All 132 endpoints implemented, full platform functionality
+
+**Modules:** Squads, Contracts, Competitions, Matches, Transfers, Coins, Challenges, Discord, Analytics
+**Endpoints:** 116 remaining endpoints
+**Critical:** Follow dependency tree (Squads → Contracts → Competitions → Matches)
+
+### **Milestone 3: Production Launch**
+
+**Goal:** Deployed to production with monitoring
+
+**Activities:** Security audit, performance optimization, AWS setup, deployment
+**Critical:** Run deployment-checklist.mdc before launch
+
+---
+
+## MODULE DEPENDENCY TREE
+
+```
+Auth (no dependencies)
+  ↓
+Users (needs Auth for authentication)
+  ↓
+Squads (needs Users for captains/rosters)
+  ↓
+Contracts (needs Users + Squads)
+  ↓
+Competitions (needs Squads for registration)
+  ↓
+Matches (needs Competitions + Squads)
+  ↓
+Transfers (needs Contracts + Squads)
+
+Parallel after Contracts:
+  - Coins (needs Users)
+  - Challenges (needs Users)
+
+Build last (cross-cutting):
+  - Discord (needs Users + Squads + Matches + Transfers)
+  - Media (needs Users + Squads)
+  - Notifications (needs all modules)
+  - Analytics (reads from all modules)
+```
+
+**Critical Path (must be sequential):** Auth → Users → Squads → Contracts → Competitions → Matches
+
+---
+
+## MILESTONE 1: COMPLETE AUTH FLOW
+
+### Phase 1: Project Setup
+
+**1.1 Initialize NestJS Project**
+
+- Use NestJS CLI to create project
+- Configure TypeScript with strict mode
+
+**1.2 Install Dependencies**
+
+- See tech-stack.mdc for complete package list
+- Milestone 1 needs: Prisma, Passport, JWT, bcrypt, class-validator, multer, sharp, nodemailer, axios
+- Defer to Milestone 2: Redis, BullMQ, Socket.io, Swagger
+
+**1.3 Create Folder Structure**
+
+- Follow backend-architecture.mdc structure exactly
+- Create all 13 module folders (even if empty)
+- Standard pattern: `module.ts`, `controller.ts`, `service.ts`, `dto/`
+
+**1.4 Configure Environment**
+
+- `.env.example` template (commit to Git)
+- `.env` for secrets (never commit)
+- ConfigModule with validation
+- Separate dev/prod credentials
+
+---
+
+### Phase 2: Database Schema (COMPLETE FIRST)
+
+**CRITICAL:** Implement entire schema from db-schema.mdc before building any module.
+
+**Why:** Prevents refactoring, ensures all relationships exist, enables parallel development
+
+**Steps:**
+
+1. Copy complete schema from db-schema.mdc into `prisma/schema.prisma`
+2. Verify all 28 tables, enums, relationships, indexes included
+3. Generate initial migration: `npx prisma migrate dev --name init`
+4. Verify in Prisma Studio: all tables created correctly
+5. Create PrismaService and PrismaModule (global export)
+
+**Verification:**
+
+- [ ] All 28 tables exist
+- [ ] All enums created
+- [ ] All relationships working
+- [ ] All indexes created
+- [ ] PrismaService injectable globally
+
+---
+
+### Phase 3: Auth Module
+
+**Implement:** Registration, login, OAuth, password reset, token management
+
+**Specifications:**
+
+- **Endpoints:** See api-requirements.mdc Auth section
+- **Flows:** See auth-strategy.mdc for complete auth flows
+- **JWT Structure:** See auth-strategy.mdc for payload fields
+- **Security Rules:** See auth-strategy.mdc for password requirements, OTP format, lockout rules
+
+**Key Endpoints:**
+
+- `POST /auth/register` - Email/password signup
+- `POST /auth/verify-email` - OTP verification
+- `POST /auth/login` - Email/password OR SQUADZ ID login
+- `POST /auth/oauth/apple` - Apple Sign-In
+- `POST /auth/oauth/google` - Google Sign-In
+- `POST /auth/refresh` - Token refresh
+- `POST /auth/logout` - Session termination
+- `POST /auth/forgot-password` - Reset request
+- `POST /auth/reset-password` - Password reset
+
+**Critical Patterns:**
+
+- JWT tokens: access (15min) + refresh (30 days), payload per auth-strategy.mdc
+- Password hashing: bcrypt 10 rounds minimum
+- Refresh tokens: store HASHED in RefreshToken table
+- Token invalidation: increment User.tokenVersion on password change
+- Account lockout: 5 failed attempts → 15-minute cooldown
+- OTP format: 6 digits, 3-minute expiry
+
+**Integration Needs:**
+
+- **→ Notifications:** Call `sendVerificationEmail()`, `sendPasswordResetEmail()`, `sendAccountLockoutEmail()`
+- **→ Users table:** Create/update User records (already exists from schema)
+
+**Testing:**
+
+- Unit: Password hashing, JWT generation, OTP generation, SQUADZ ID uniqueness
+- E2E: Complete flows per testing-standards.mdc (registration → verification → login)
+
+---
+
+### Phase 4: Users Module
+
+**Implement:** 4-page account setup, profile management
+
+**Specifications:**
+
+- **Endpoints:** See api-requirements.mdc Users section
+- **Setup Flow:** See auth-strategy.mdc for progressive setup rules
+- **User Fields:** See db-schema.mdc User model
+
+**Key Endpoints:**
+
+- `POST /users/:id/setup` - Complete setup pages (1-4)
+- `GET /users/:id` - View profile
+- `PATCH /users/:id/profile` - Update profile
+- `PATCH /users/:id/password` - Change password
+- `DELETE /users/:id/setup/page2` - Disconnect Discord
+
+**Setup Pages (per auth-strategy.mdc):**
+
+1. **Page 1:** Player details (nationality, location, favorite team, PSN ID, known as name)
+2. **Page 2:** Discord connection (required for match coordination)
+3. **Page 3:** Positions (primary + secondary)
+4. **Page 4:** Avatar upload (triggers Media module)
+
+**Critical Logic:**
+
+- Pages completable in any order
+- Track with `page1Complete`, `page2Complete`, etc. + `setupPagesCompleted` counter
+- Role upgrade: User → Player ONLY when `setupPagesCompleted === 4`
+- Role downgrade: Disconnect Discord drops `setupPagesCompleted`, may downgrade to User if < 4
+- Fields `email`, `squadzId`, `role` immutable after creation
+
+**Integration Needs:**
+
+- **→ Media:** Call `processAvatar()` for page 4 upload
+- **→ Discord:** Call `exchangeCodeForUser()` for page 2 connection
+
+**Guards:**
+
+- `OwnResourceGuard` on all endpoints (users manage only own data)
+- `SetupCompleteGuard` blocks Player features for incomplete setup
+
+**Testing:**
+
+- Unit: Page completion logic, role upgrade/downgrade
+- E2E: Complete setup in order, skip pages, out-of-order completion, Discord disconnect
+
+---
+
+### Phase 5: Media Module
+
+**Implement:** Image processing (avatar upload, background removal, S3 storage)
+
+**Specifications:**
+
+- **Processing:** See tech-stack.mdc for Sharp and Removal.ai integration
+- **S3 Config:** See tech-stack.mdc for bucket names and folder structure
+
+**Service Contract:**
+
+```typescript
+processAvatar(userId: string, file: Buffer): Promise<{ avatarUrl: string, thumbnailUrl: string }>
+```
+
+**Processing Pipeline:**
+
+1. Validate file type (JPEG/PNG), size (5MB max)
+2. Remove background via Removal.ai API (fallback to original if fails)
+3. Optimize main image: 512x512, WebP, quality 85%
+4. Generate thumbnail: 128x128, WebP, quality 80%
+5. Upload to S3: `avatars/{userId}.webp` and `avatars/{userId}_thumb.webp`
+6. Return public URLs
+
+**Critical:**
+
+- Public read access on S3 avatars
+- Filename convention: `{userId}.webp` (consistent)
+- Graceful Removal.ai failure (log warning, use original)
+- Clean up temp files after processing
+
+**Integration:**
+
+- **Called by:** Users module (page 4), later Squads module (logo upload)
+
+**Testing:**
+
+- Unit: File validation, image optimization
+- E2E: Upload valid image, oversized image (fail), invalid type (fail)
+
+---
+
+### Phase 6: Notifications Module
+
+**Implement:** Email service for auth-related notifications
+
+**Specifications:**
+
+- **Email Types:** See auth-strategy.mdc for content requirements
+- **SMTP Config:** See tech-stack.mdc for Mailtrap (dev) and AWS SES (prod)
+
+**Service Contract:**
+
+```typescript
+sendVerificationEmail(email: string, otp: string, squadzId: string): Promise<void>
+sendPasswordResetEmail(email: string, resetToken: string): Promise<void>
+sendAccountLockoutEmail(email: string, unlockTime: Date): Promise<void>
+```
+
+**Email Templates (Handlebars):**
+
+- `email-verification.hbs` - Display 6-digit OTP, SQUADZ ID, 3-min expiry
+- `password-reset.hbs` - Reset link with token, 1-hour expiry, security disclaimer
+- `account-lockout.hbs` - Unlock time, 15-min lockout, security advisory
+
+**SMTP Setup:**
+
+- Dev: Mailtrap (captures emails, no real send)
+- Prod: AWS SES via SMTP (requires domain verification, SPF/DKIM)
+- Configure via MailerModule with Handlebars template engine
+
+**Integration:**
+
+- **Called by:** Auth module (all email triggers)
+
+**Testing:**
+
+- Unit: Template rendering
+- E2E: Verify emails sent on registration, password reset, lockout
+
+---
+
+### Phase 7: Common Guards & Decorators
+
+**Implement:** Reusable authorization components
+
+**Specifications:**
+
+- **RBAC Matrix:** See api-requirements.mdc for permission requirements
+- **Guard Patterns:** See backend-architecture.mdc for guard execution order
+
+**Required Guards:**
+
+- `JwtAuthGuard` - Validates JWT, attaches user to request (global)
+- `RolesGuard` - Checks user role against @Roles() decorator
+- `SetupCompleteGuard` - Blocks if setupComplete === false OR role !== PLAYER
+- `OwnResourceGuard` - Validates userId in token matches :id in route
+
+**Required Decorators:**
+
+- `@CurrentUser()` - Extracts user from request
+- `@Roles(UserRole.PLAYER)` - Specifies required roles
+- `@Public()` - Marks routes as public (skip JWT)
+
+**Critical Pattern:**
+
+- Guard order matters: JwtAuthGuard MUST come before role/setup guards
+- Global JwtAuthGuard with @Public() opt-out for auth endpoints
+
+---
+
+### Phase 8: Integration Testing
+
+**Complete E2E test coverage per testing-standards.mdc**
+
+**Test Flows:**
+
+1. **Email/Password Registration:** Register → Verify OTP → Complete 4 pages → Verify Player role
+2. **OAuth Registration:** Google/Apple signup → Complete 4 pages → Verify Player role
+3. **Partial Setup:** Complete 2 pages → Verify User role retained
+4. **Role Downgrade:** Complete setup → Disconnect Discord → Verify downgrade to User
+5. **Password Reset:** Request reset → Reset with token → Login with new password
+6. **Account Lockout:** 5 failed logins → Verify locked → Wait 15min → Verify unlocked
+
+**Test Helpers (test/helpers/auth.helper.ts):**
+
+- `setupE2ETest()` - Initialize NestJS app for testing
+- `getAuthToken()` - Login and return access token
+- Reusable helpers reduce test boilerplate
+
+**Test Database:**
+
+- Seed file: `prisma/seed.test.ts` with predictable test accounts
+- Reset between test runs for isolation
+
+---
+
+### Critical Patterns & Anti-Patterns
+
+**Setup Page Completion:**
+
+```typescript
+// ❌ WRONG: Upgrade role before all 4 pages complete
+if (user.page1Complete) user.role = UserRole.PLAYER;
+
+// ✅ CORRECT: Check total count
+if (user.setupPagesCompleted === 4) user.role = UserRole.PLAYER;
+```
+
+**Token Management:**
+
+```typescript
+// ❌ WRONG: Store refresh tokens in plain text
+await prisma.refreshToken.create({ token: refreshToken });
+
+// ✅ CORRECT: Hash before storage
+await prisma.refreshToken.create({ tokenHash: hash(refreshToken) });
+
+// ❌ WRONG: Not incrementing tokenVersion on password change
+await prisma.user.update({ passwordHash: newHash });
+
+// ✅ CORRECT: Invalidate all sessions
+await prisma.user.update({
+  passwordHash: newHash,
+  tokenVersion: { increment: 1 },
+});
+```
+
+**Guard Ordering:**
+
+```typescript
+// ❌ WRONG: Setup guard before auth guard
+@UseGuards(SetupCompleteGuard, JwtAuthGuard)
+
+// ✅ CORRECT: Auth guard provides user to subsequent guards
+@UseGuards(JwtAuthGuard, SetupCompleteGuard)
+```
+
+**Role Downgrade:**
+
+```typescript
+// ❌ WRONG: Disconnect Discord without checking page count
+user.discordUserId = null;
+user.page2Complete = false;
+user.setupPagesCompleted -= 1;
+
+// ✅ CORRECT: Check if downgrade needed
+user.discordUserId = null;
+user.page2Complete = false;
+user.setupPagesCompleted -= 1;
+if (user.setupPagesCompleted < 4) {
+  user.role = UserRole.USER;
+  user.setupComplete = false;
+}
+```
+
+---
+
+## MILESTONE 2: ALL FEATURE MODULES
+
+### Build Sequence
+
+**Phase 1 (Sequential):** Squads → Contracts → Competitions → Matches
+**Phase 2 (Parallel):** Transfers, Coins, Challenges
+**Phase 3 (Last):** Discord, Analytics
+
+### Per-Module Requirements
+
+Each module follows standard pattern:
+
+1. **Structure:** module.ts, controller.ts, service.ts, dto/
+2. **Specifications:**
+   - Endpoints per api-requirements.mdc
+   - Business logic per game-rules.mdc
+   - Data models per db-schema.mdc
+3. **Guards:** Apply RBAC per api-requirements.mdc permission matrix
+4. **Testing:** Unit + E2E per testing-standards.mdc
+
+### Module-Specific Notes
+
+**Squads:**
+
+- Depends on Users (captains are User records)
+- Owns Squad table and SquadBankTransaction
+- NonCompSquad → CompSquad state transitions on competition registration
+
+**Contracts:**
+
+- Depends on Users + Squads
+- Owns Contract table
+- Fee calculations per game-rules.mdc (tier-based)
+- State machine: PENDING → ACTIVE → TERMINATED/BROKEN
+
+**Competitions:**
+
+- Depends on Squads
+- Owns Competition, CompetitionRegistration, Division tables
+- Registration fee logic per game-rules.mdc (tier limits)
+
+**Matches:**
+
+- Depends on Competitions + Squads
+- Owns Match, MatchSquad, MatchLineup, MatchParticipation, PlayerRating, Dispute tables
+- Dual-captain lineup submission
+- XP distribution per game-rules.mdc
+
+**Transfers:**
+
+- Depends on Contracts + Squads
+- Owns TransferPoolEntry, TransferRequest, TransferWindow tables
+- Free Agent vs Transfer Listed logic per game-rules.mdc
+
+**Coins:**
+
+- Depends on Users
+- Owns CoinTransaction, CashTransaction tables
+- Receipt verification (Apple/Google)
+- Idempotency enforcement
+
+**Challenges:**
+
+- Depends on Users
+- Owns Challenge, PlayerChallenge tables
+- XP rewards per game-rules.mdc
+
+**Discord:**
+
+- Depends on Users + Squads + Matches + Transfers
+- OAuth integration + Bot API for channel management
+- See discord-integration.mdc for complete specification
+
+**Analytics:**
+
+- Depends on all modules (read-only)
+- Aggregation queries, leaderboards, metrics
+- Caching strategy for expensive queries
+
+---
+
+## MILESTONE 3: PRODUCTION LAUNCH
+
+### Pre-Launch Checklist
+
+**Run deployment-checklist.mdc completely before deploying**
+
+Key items:
+
+- [ ] Security audit (authentication, authorization, input validation)
+- [ ] Performance optimization (indexes, pagination, query performance)
+- [ ] AWS infrastructure (Elastic Beanstalk, RDS, S3, CloudWatch)
+- [ ] Monitoring setup (Sentry, PostHog)
+- [ ] Production credentials (separate from dev)
+- [ ] Backup strategy (RDS snapshots)
+- [ ] Rollback plan documented
+
+### Deployment Steps
+
+1. **Pre-Deploy:** Run all tests, verify migrations, review checklist
+2. **Deploy:** Apply migrations → Deploy to Elastic Beanstalk → Health checks
+3. **Post-Deploy:** Monitor logs, verify critical flows, smoke tests
+4. **Rollback if:** Error rate > 5%, critical endpoints failing, health checks failing
+
+---
+
+## INTEGRATION CONTRACTS REFERENCE
+
+### Auth → Notifications
+
+```typescript
+sendVerificationEmail(email, otp, squadzId): Promise<void>
+sendPasswordResetEmail(email, resetToken): Promise<void>
+sendAccountLockoutEmail(email, unlockTime): Promise<void>
+```
+
+### Users → Media
+
+```typescript
+processAvatar(userId, fileBuffer): Promise<{ avatarUrl, thumbnailUrl }>
+```
+
+### Users → Discord
+
+```typescript
+exchangeCodeForUser(authCode): Promise<{ discordUserId, discordUsername }>
+```
+
+### Squads → Coins
+
+```typescript
+deductFromSquadBank(squadId, amount, description): Promise<void>
+creditToSquadBank(squadId, amount, description): Promise<void>
+```
+
+### Contracts → Transfers
+
+```typescript
+addToTransferPool(userId, status: 'FREE_AGENT' | 'TRANSFER_LISTED'): Promise<void>
+removeFromTransferPool(userId): Promise<void>
+```
+
+### Error Handling Pattern
+
+- Propagate meaningful errors (don't expose internals)
+- Log with correlation IDs
+- 30s timeout on external APIs
+- Fallback behavior where possible
+
+---
+
+## TESTING STRATEGY
+
+### Unit Tests (Per Module)
+
+- Business logic in services
+- Calculations, validations, state transitions
+- Mock PrismaService and external services
+- Fast (< 100ms per test)
+
+### E2E Tests (Per Module)
+
+- Complete workflows from api-requirements.mdc
+- Use real test database (separate from dev)
+- Test RBAC enforcement
+- Verify database state changes
+
+### Test Patterns
+
+- See testing-standards.mdc for detailed patterns
+- Seed data: `prisma/seed.test.ts`
+- Helpers: `test/helpers/` for reusable test utilities
+- Assertions: Focus on business-critical fields
+
+---
+
+## RELATED DOCUMENTATION
+
+**Always reference these authoritative sources:**
+
+- **db-schema.mdc** - All database tables, fields, relationships, indexes
+- **backend-architecture.mdc** - Module structure, patterns, responsibilities
+- **api-requirements.mdc** - All endpoints, RBAC matrix, screen mappings
+- **auth-strategy.mdc** - Authentication flows, JWT, OAuth, user progression
+- **game-rules.mdc** - Business rules, validation logic, tier limits
+- **tech-stack.mdc** - Packages, infrastructure, environment setup
+- **testing-standards.mdc** - Unit/E2E patterns, assertions, seed data
+- **deployment-checklist.mdc** - Production launch verification
+- **discord-integration.mdc** - Discord OAuth and Bot API integration
+
+**This guide orchestrates WHEN to build and HOW modules integrate. Specifications live in the docs above.**

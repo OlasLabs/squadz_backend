@@ -1,0 +1,1942 @@
+# DATABASE SCHEMA
+
+## DESCRIPTION
+
+Database schema for SQUADZ backend (NestJS + Prisma + PostgreSQL). Defines all tables, relationships, indexes, constraints, and enums supporting 13 resource-based modules. Use this as the authoritative source for Prisma schema development, migration creation, and database query implementation.
+
+**Scope:**
+- Complete table definitions for all 13 modules
+- Relationships and foreign key constraints
+- Indexes for query optimization
+- Enums for type safety
+- State machine fields for workflow tracking
+- Audit trails and soft deletes
+- Financial transaction ledgers
+
+**Related Docs:**
+- `API_REQUIREMENTS.md` - Endpoint to table mappings
+- `GAME_RULES.md` - Business constraints and validation rules
+- `AUTH_STRATEGY.md` - User roles and permission logic
+- `MONETIZATION.md` - Coin transactions and subscription states
+
+---
+
+## NAMING CONVENTIONS
+
+**Tables:** PascalCase singular (e.g., `User`, `Squad`, `Match`)  
+**Fields:** camelCase (e.g., `userId`, `createdAt`, `knownAsName`)  
+**Enums:** SCREAMING_SNAKE_CASE values (e.g., `ACTIVE`, `PENDING_APPROVAL`)  
+**Indexes:** `idx_<table>_<field(s)>` (e.g., `idx_user_email`)  
+**Foreign Keys:** `fk_<table>_<referenced_table>` (e.g., `fk_contract_user`)
+
+---
+
+## CORE TABLES
+
+### Users
+
+**Purpose:** Account management, authentication, and user progression tracking
+
+```prisma
+model User {
+  id                    String    @id @default(cuid())
+  squadzId              String    @unique // Format: SQZ-XXXXXXXX
+  email                 String    @unique
+  passwordHash          String?   // Nullable for OAuth-only accounts
+  fullName              String
+  username              String    @unique // Alphanumeric + underscores
+  
+  // OAuth Providers
+  authProvider          AuthProvider // EMAIL_PASSWORD, GOOGLE, APPLE
+  googleId              String?   @unique
+  appleId               String?   @unique
+  
+  // Email Verification
+  emailVerified         Boolean   @default(false)
+  emailVerificationOtp  String?
+  otpExpiresAt          DateTime?
+  
+  // Password Reset
+  resetToken            String?
+  resetTokenExpiresAt   DateTime?
+  
+  // Account Security
+  tokenVersion          Int       @default(0) // Increment to invalidate all tokens
+  failedLoginAttempts   Int       @default(0)
+  accountLockedUntil    DateTime?
+  
+  // Role & Setup Status
+  role                  UserRole  @default(USER)
+  setupComplete         Boolean   @default(false)
+  setupPagesCompleted   Int       @default(0) // 0-4 tracking
+  page1Complete         Boolean   @default(false)
+  page2Complete         Boolean   @default(false)
+  page3Complete         Boolean   @default(false)
+  page4Complete         Boolean   @default(false)
+  
+  // Account Setup Data (Page 1)
+  nationality           String?
+  currentLocation       String?
+  favoriteTeam          String?
+  psnId                 String?
+  knownAsName           String?   // Display name for cards, match facts, ratings
+  
+  // Discord Connection (Account Setup Page 2 - Required)
+  discordUserId         String?   @unique
+  discordUsername       String?
+  discordConnectedAt    DateTime?
+  
+  // Account Setup Data (Page 3)
+  primaryPosition       Position?
+  secondaryPosition     Position?
+  
+  // Account Setup Data (Page 4)
+  avatarUrl             String?
+  avatarThumbnailUrl    String?
+  
+  // XP & Progression
+  totalXp               Int       @default(0)
+  currentGrade          Grade     @default(D)
+  
+  // Player Valuation (2-12 coins)
+  playerValuation       Int       @default(2)
+  valuationLastUpdated  DateTime  @default(now())
+  
+  // Subscription (managed via App Store/Google Play)
+  subscriptionTier      SubscriptionTier @default(BASIC)
+  subscriptionStatus    SubscriptionStatus @default(ACTIVE)
+  subscriptionPlatform  Platform? // IOS or ANDROID
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean   @default(false)
+  gracePeriodEnd        DateTime?
+  
+  // Coin Balance
+  coinBalance           Int       @default(0)
+  
+  // Cash Balance (prize money, withdrawable to bank)
+  cashBalance           Decimal   @default(0)
+  
+  // Timestamps
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  lastLoginAt           DateTime?
+  
+  // Soft Delete
+  deletedAt             DateTime?
+  
+  // Relations
+  refreshTokens         RefreshToken[]
+  contracts             Contract[]          @relation("PlayerContracts")
+  sentContracts         Contract[]          @relation("CaptainSentContracts")
+  captainSquads         Squad[]             @relation("SquadCaptain")
+  viceCaptainSquads     Squad[]             @relation("SquadViceCaptain")
+  playerCards           PlayerCard[]
+  customPlayerCards     CustomPlayerCard[]
+  attributeScreenshots  AttributeScreenshot[]
+  transferPoolEntries   TransferPoolEntry[]
+  transferRequests      TransferRequest[]   @relation("TransferRequestSender")
+  receivedTransfers     TransferRequest[]   @relation("TransferRequestReceiver")
+  matchParticipations   MatchParticipation[]
+  playerRatings         PlayerRating[]      @relation("RatingGiver")
+  receivedRatings       PlayerRating[]      @relation("RatingReceiver")
+  xpTransactions        XpTransaction[]
+  coinTransactions      CoinTransaction[]
+  cashTransactions      CashTransaction[]
+  challenges            PlayerChallenge[]
+  notifications         Notification[]
+  adminApplications     AdminApplication[]
+  memoryEdits           MemoryEdit[]
+  addedStreamLinks      StreamLink[]
+  
+  @@index([email])
+  @@index([squadzId])
+  @@index([discordUserId])
+  @@index([subscriptionTier])
+  @@index([currentGrade])
+  @@index([role])
+}
+```
+
+**Key Fields:**
+- `setupPagesCompleted`: Tracks progressive setup (0-4). Player role assigned when = 4
+- `discordUserId`: Required for Discord channel access (captured during setup Page 2)
+- `tokenVersion`: Invalidates all refresh tokens on security events
+- `subscriptionStatus`: State machine (ACTIVE/GRACE_PERIOD/EXPIRED/CANCELLED)
+- `playerValuation`: Dynamic 2-12 coins based on performance (see PLAYER_VALUATION.md)
+
+---
+
+### RefreshToken
+
+**Purpose:** JWT refresh token management with version tracking
+
+```prisma
+model RefreshToken {
+  id             String   @id @default(cuid())
+  userId         String
+  tokenHash      String   @unique // Hashed token, never plain text
+  tokenVersion   Int      // Must match User.tokenVersion
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([expiresAt])
+}
+```
+
+**Cleanup:** Scheduled job deletes expired tokens daily
+
+---
+
+### Squad
+
+**Purpose:** Team management with NonCompSquad/CompSquad state tracking
+
+```prisma
+model Squad {
+  id                 String      @id @default(cuid())
+  name               String
+  abbreviation       String      // 2-5 chars
+  slogan             String?
+  logoUrl            String
+  
+  // Squad Type State
+  isCompSquad        Boolean     @default(false) // false = NonCompSquad, true = CompSquad
+  
+  // Leadership
+  captainId          String
+  viceCaptainId      String?
+  
+  // Squad Bank (shared coin wallet)
+  squadBankBalance   Int         @default(0)
+  
+  // Roster Limits (5-14 players)
+  currentRosterSize  Int         @default(0)
+  maxRosterSize      Int         @default(14)
+  
+  // Squad Invite Code
+  inviteCode         String      @unique // Format: SQD###-##
+  
+  // Squad Formation
+  formation          String?     // e.g., "4-3-3", default squad formation
+  
+  // Trophy Count
+  trophyCount        Int         @default(0) // Competitions won
+  
+  // Discord Team Channel
+  discordChannelId   String?     @unique
+  
+  // Timestamps
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  
+  // Soft Delete
+  deletedAt          DateTime?
+  
+  // Relations
+  captain            User        @relation("SquadCaptain", fields: [captainId], references: [id])
+  viceCaptain        User?       @relation("SquadViceCaptain", fields: [viceCaptainId], references: [id])
+  contracts          Contract[]
+  competitions       CompetitionRegistration[]
+  matches            MatchSquad[]
+  transferRequests   TransferRequest[]
+  bankTransactions   SquadBankTransaction[]
+  streamLinks        StreamLink[]
+  
+  @@index([captainId])
+  @@index([viceCaptainId])
+  @@index([inviteCode])
+  @@index([isCompSquad])
+}
+```
+
+**State Transition:** `isCompSquad` flips to `true` when squad registers for first competition
+
+---
+
+### Contract
+
+**Purpose:** Player-squad contracts with InitContract/CompContract distinction
+
+```prisma
+model Contract {
+  id                  String        @id @default(cuid())
+  
+  // Contract Parties
+  playerId            String
+  squadId             String
+  captainId           String        // Captain who sent contract
+  
+  // Contract Type
+  contractType        ContractType  // INIT_CONTRACT or COMP_CONTRACT
+  
+  // Competition Context (CompContract only)
+  competitionId       String?
+  
+  // Contract Terms
+  positions           Position[]    // Positions player can play
+  winningsSharePercent Decimal?     // Percentage of prize money (CompContract)
+  winningsShareAmount  Decimal?     // Calculated dollar amount
+  transferFee         Int?          // If Transfer Listed player
+  optionalNotes       String?
+  
+  // Contract State
+  status              ContractStatus @default(PENDING)
+  
+  // Acceptance Tracking
+  sentAt              DateTime      @default(now())
+  acceptedAt          DateTime?
+  declinedAt          DateTime?
+  terminatedAt        DateTime?
+  
+  // Breaking Contract
+  breakFee            Int?          // Calculated on break (tier-based)
+  brokenAt            DateTime?
+  
+  // Timestamps
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  
+  // Relations
+  player              User          @relation("PlayerContracts", fields: [playerId], references: [id])
+  squad               Squad         @relation(fields: [squadId], references: [id])
+  captain             User          @relation("CaptainSentContracts", fields: [captainId], references: [id])
+  competition         Competition?  @relation(fields: [competitionId], references: [id])
+  
+  @@index([playerId])
+  @@index([squadId])
+  @@index([competitionId])
+  @@index([status])
+  @@index([contractType])
+}
+```
+
+**Business Rules:**
+- `contractType = INIT_CONTRACT`: NonCompSquad, free to break
+- `contractType = COMP_CONTRACT`: CompSquad, break fee = valuation × tier multiplier
+- Only `ACTIVE` contracts count toward roster size
+
+---
+
+### Competition
+
+**Purpose:** League and cup tournament management
+
+```prisma
+model Competition {
+  id                  String             @id @default(cuid())
+  name                String
+  type                CompetitionType    // LEAGUE or CUP
+  format              CompetitionFormat  // KNOCKOUT, ROUND_ROBIN, etc.
+  region              String
+  
+  // Prize Pool
+  totalPrizePool      Decimal
+  prizeDistribution   Json               // Array of {position, amount}
+  
+  // Registration
+  entryFee            Int                // Coins
+  maxTeams            Int
+  registrationOpen    Boolean            @default(true)
+  
+  // Schedule
+  startDate           DateTime
+  endDate             DateTime?
+  
+  // Competition Rules
+  rulesUrl            String?
+  specificRules       Json?
+  
+  // Status
+  status              CompetitionStatus  @default(UPCOMING)
+  
+  // Banner & Branding
+  bannerImageUrl      String?
+  logoUrl             String?
+  
+  // Admins
+  adminIds            String[]           // Array of admin User IDs
+  
+  // Timestamps
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  
+  // Relations
+  registrations       CompetitionRegistration[]
+  divisions           Division[]
+  matches             Match[]
+  contracts           Contract[]
+  transferWindows     TransferWindow[]
+  
+  @@index([region])
+  @@index([status])
+  @@index([type])
+}
+```
+
+**Status Flow:** `UPCOMING` → `REGISTRATION_OPEN` → `IN_PROGRESS` → `COMPLETED`
+
+---
+
+### CompetitionRegistration
+
+**Purpose:** Squad registration tracking with Sub-Ineligible player handling
+
+```prisma
+model CompetitionRegistration {
+  id                      String    @id @default(cuid())
+  competitionId           String
+  squadId                 String
+  
+  // Registration Details
+  registeredBy            String    // Captain User ID
+  registrationFee         Int       // Entry fee paid
+  
+  // Player Registration Tracking
+  registeredPlayerIds     String[]  // Player IDs registered for this competition
+  subIneligiblePlayerIds  String[]  // Players at tier competition limit
+  
+  // Squad Pass Usage (one-time 6 coins per competition)
+  usedSquadPass           Boolean   @default(false)
+  squadPassPurchasedAt    DateTime?
+  
+  // Vice Captain Requirement
+  viceCaptainId           String
+  
+  // Status
+  status                  RegistrationStatus @default(PENDING)
+  
+  // Timestamps
+  registeredAt            DateTime  @default(now())
+  approvedAt              DateTime?
+  rejectedAt              DateTime?
+  
+  // Relations
+  competition             Competition @relation(fields: [competitionId], references: [id])
+  squad                   Squad     @relation(fields: [squadId], references: [id])
+  
+  @@unique([competitionId, squadId]) // One registration per squad per competition
+  @@index([competitionId])
+  @@index([squadId])
+  @@index([status])
+}
+```
+
+**Key Logic:**
+- `subIneligiblePlayerIds`: Players requiring 2 coin registration fee
+- `usedSquadPass`: If true, all Sub-Ineligible players registered for 6 coins flat rate
+
+---
+
+### Division
+
+**Purpose:** Competition divisions and league tables
+
+```prisma
+model Division {
+  id              String      @id @default(cuid())
+  competitionId   String
+  name            String      // e.g., "Division 1", "Premier League"
+  level           Int         // 1 = top tier
+  
+  // Table Tracking
+  standings       Json        // Array of {squadId, played, won, drawn, lost, gf, ga, gd, points}
+  
+  // Relations
+  competition     Competition @relation(fields: [competitionId], references: [id])
+  matches         Match[]
+  
+  @@index([competitionId])
+}
+```
+
+**Standings JSON Structure:**
+```json
+[
+  {
+    "squadId": "clx...",
+    "position": 1,
+    "played": 10,
+    "won": 8,
+    "drawn": 1,
+    "lost": 1,
+    "goalsFor": 24,
+    "goalsAgainst": 6,
+    "goalDifference": 18,
+    "points": 25
+  }
+]
+```
+
+---
+
+### Match
+
+**Purpose:** Match management with dual-captain verification workflow
+
+```prisma
+model Match {
+  id                    String       @id @default(cuid())
+  competitionId         String
+  divisionId            String?
+  
+  // Match Type
+  matchType             MatchType    // LEAGUE, CUP, FRIENDLY
+  
+  // Scheduled Time
+  scheduledTime         DateTime
+  
+  // Match Status
+  status                MatchStatus  @default(SCHEDULED)
+  
+  // Coordination Status
+  homeReadyAt           DateTime?
+  awayReadyAt           DateTime?
+  homeDoneAt            DateTime?
+  awayDoneAt            DateTime?
+  
+  // Discord Match Room
+  discordChannelId      String?      @unique
+  
+  // Result Submission Tracking
+  homeSubmittedAt       DateTime?
+  awaySubmittedAt       DateTime?
+  
+  // Final Result
+  homeScore             Int?
+  awayScore             Int?
+  resultVerified        Boolean      @default(false)
+  verifiedAt            DateTime?
+  
+  // Match Facts
+  matchFacts            Json?        // {goalscorers, assists, ratings, etc.}
+  
+  // Dispute Tracking
+  disputeStatus         DisputeStatus @default(NONE)
+  disputeCategories     String[]     // ["goals", "assists", "scores", "lineup"]
+  disputeResolvedAt     DateTime?
+  
+  // Timestamps
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  completedAt           DateTime?
+  
+  // Relations
+  competition           Competition  @relation(fields: [competitionId], references: [id])
+  division              Division?    @relation(fields: [divisionId], references: [id])
+  squads                MatchSquad[]
+  lineups               MatchLineup[]
+  participations        MatchParticipation[]
+  ratings               PlayerRating[]
+  disputes              Dispute[]
+  streamLinks           StreamLink[]
+  
+  @@index([competitionId])
+  @@index([status])
+  @@index([scheduledTime])
+}
+```
+
+**Status Flow:**
+```
+SCHEDULED → LINEUP_SUBMITTED → READY → LIVE → DONE → 
+RESULT_SUBMITTED → VERIFIED → COMPLETED
+```
+
+**Dispute Flow:** If mismatch → `disputeStatus = PENDING` → Admin reviews → `RESOLVED`
+
+---
+
+### MatchSquad
+
+**Purpose:** Join table for match participants (home/away squads)
+
+```prisma
+model MatchSquad {
+  id        String  @id @default(cuid())
+  matchId   String
+  squadId   String
+  side      MatchSide // HOME or AWAY
+  
+  // Relations
+  match     Match   @relation(fields: [matchId], references: [id])
+  squad     Squad   @relation(fields: [squadId], references: [id])
+  
+  @@unique([matchId, side]) // Each match has exactly 1 home and 1 away squad
+  @@index([matchId])
+  @@index([squadId])
+}
+```
+
+---
+
+### MatchLineup
+
+**Purpose:** Captain/Vice Captain lineup submissions
+
+```prisma
+model MatchLineup {
+  id                String     @id @default(cuid())
+  matchId           String
+  squadId           String
+  submittedBy       String     // Captain or Vice Captain User ID
+  
+  // Formation
+  formation         String     // e.g., "4-3-3"
+  
+  // Player Selection
+  startingPlayerIds String[]   // 11 player User IDs
+  substitutePlayerIds String[] // Up to 3 player User IDs
+  
+  // Submission Timing
+  submittedAt       DateTime   @default(now())
+  isLateSubmission  Boolean    @default(false)
+  lateFee           Int?       // 2 coins if late
+  
+  // Relations
+  match             Match      @relation(fields: [matchId], references: [id])
+  
+  @@unique([matchId, squadId]) // One lineup per squad per match
+  @@index([matchId])
+}
+```
+
+**Timeline:** Standard deadline 1hr before, late submission window until 30min before
+
+---
+
+### MatchParticipation
+
+**Purpose:** Individual player participation tracking for XP/stats
+
+```prisma
+model MatchParticipation {
+  id                String   @id @default(cuid())
+  matchId           String
+  playerId          String
+  squadId           String
+  
+  // Participation Type
+  isStarting        Boolean  @default(false)
+  minutesPlayed     Int      @default(0)
+  
+  // Performance Stats
+  goals             Int      @default(0)
+  assists           Int      @default(0)
+  tackles           Int      @default(0)
+  fouls             Int      @default(0)
+  yellowCards       Int      @default(0)
+  redCards          Int      @default(0)
+  
+  // Match Rating
+  matchRating       Decimal? // 0.0-10.0 scale
+  
+  // Recognition
+  isMvp             Boolean  @default(false)
+  isCleanSheet      Boolean  @default(false) // Defenders/GKs only
+  
+  // XP Earned
+  xpEarned          Int      @default(0)
+  
+  // Relations
+  match             Match    @relation(fields: [matchId], references: [id])
+  player            User     @relation(fields: [playerId], references: [id])
+  
+  @@unique([matchId, playerId])
+  @@index([playerId])
+  @@index([matchId])
+}
+```
+
+**XP Calculation:** Based on participation stats (see XP_SYSTEM.md)
+
+---
+
+### PlayerRating
+
+**Purpose:** Post-match player-to-player ratings
+
+```prisma
+model PlayerRating {
+  id              String   @id @default(cuid())
+  matchId         String
+  raterPlayerId   String   // Player giving rating
+  ratedPlayerId   String   // Player being rated
+  
+  // Rating
+  rating          Decimal  // 0.0-10.0 scale
+  
+  // XP Reward for Rater
+  xpEarned        Int      @default(1) // 1 XP for completing ratings
+  
+  // Timestamp
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  match           Match    @relation(fields: [matchId], references: [id])
+  rater           User     @relation("RatingGiver", fields: [raterPlayerId], references: [id])
+  ratedPlayer     User     @relation("RatingReceiver", fields: [ratedPlayerId], references: [id])
+  
+  @@unique([matchId, raterPlayerId, ratedPlayerId])
+  @@index([matchId])
+}
+```
+
+**Eligibility:** Only players in submitted lineup can rate squadmates
+
+---
+
+### Dispute
+
+**Purpose:** Match result dispute tracking and resolution
+
+```prisma
+model Dispute {
+  id                String        @id @default(cuid())
+  matchId           String
+  initiatedBy       String        // Captain or Vice Captain User ID
+  
+  // Dispute Details
+  categories        String[]      // ["goals", "assists", "scores", "lineup"]
+  description       String
+  
+  // Evidence (uploaded to Discord)
+  evidenceUploaded  Boolean       @default(false)
+  
+  // Discord Dispute Channel
+  discordChannelId  String?
+  
+  // Resolution
+  status            DisputeStatus @default(PENDING)
+  resolvedBy        String?       // Admin User ID
+  resolution        String?
+  penaltyApplied    Boolean       @default(false)
+  
+  // Timestamps
+  createdAt         DateTime      @default(now())
+  resolvedAt        DateTime?
+  
+  // Relations
+  match             Match         @relation(fields: [matchId], references: [id])
+  
+  @@index([matchId])
+  @@index([status])
+}
+```
+
+**Penalty:** -30 XP for captain who submitted false data
+
+---
+
+### StreamLink
+
+**Purpose:** Match livestream URL management (max 2 per squad per match)
+
+```prisma
+model StreamLink {
+  id          String   @id @default(cuid())
+  matchId     String
+  squadId     String   // Which squad added this link
+  addedById   String   // Captain/Vice Captain who added it
+  url         String   // Stream URL (Twitch, YouTube, etc.)
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  squad       Squad    @relation(fields: [squadId], references: [id])
+  addedBy     User     @relation(fields: [addedById], references: [id])
+  
+  @@unique([matchId, squadId]) // Max 1 link per squad per match (PRD says max 2 total)
+  @@index([matchId])
+}
+```
+
+**Business Rules:**
+- Maximum 2 stream links per match total (1 per squad)
+- Only Captain or Vice Captain can add stream links
+- Links must be valid URLs (validated in DTO)
+
+---
+
+### TransferPoolEntry
+
+**Purpose:** Transfer market listings with Free Agent/Transfer Listed status
+
+```prisma
+model TransferPoolEntry {
+  id                  String              @id @default(cuid())
+  playerId            String
+  
+  // Pool Status
+  poolStatus          TransferPoolStatus  // FREE_AGENT or TRANSFER_LISTED
+  
+  // Transfer Listed Details
+  listedBySquadId     String?
+  listedByCaptainId   String?
+  transferFee         Int?                // Player valuation at time of listing
+  
+  // Player Preferences
+  preferredPosition   Position
+  secondaryPosition   Position?
+  contractType        ContractType        // Preferred contract type
+  openToViceCaptain   Boolean             @default(false)
+  enableDiscordContact Boolean            @default(true)
+  
+  // Timestamps
+  enteredPoolAt       DateTime            @default(now())
+  exitedPoolAt        DateTime?
+  
+  // Relations
+  player              User                @relation(fields: [playerId], references: [id])
+  
+  @@index([playerId])
+  @@index([poolStatus])
+}
+```
+
+**Free Agent vs Transfer Listed:**
+- Free Agent: `poolStatus = FREE_AGENT`, `transferFee = null`, already paid to break contract
+- Transfer Listed: `poolStatus = TRANSFER_LISTED`, `transferFee = playerValuation`, Captain placed in pool
+
+---
+
+### TransferRequest
+
+**Purpose:** Captain-to-player transfer negotiation tracking
+
+```prisma
+model TransferRequest {
+  id                  String              @id @default(cuid())
+  
+  // Transfer Parties
+  sendingCaptainId    String
+  receivingPlayerId   String
+  targetSquadId       String              // Squad captain wants player for
+  
+  // Current Squad (if Transfer Listed)
+  currentSquadId      String?
+  
+  // Transfer Terms
+  transferFee         Int?                // If Transfer Listed player
+  signingFee          Int                 // 0 for Free Agent, valuation for Transfer Listed
+  registrationFee     Int                 @default(2) // 2 coins
+  totalCost           Int                 // transferFee + signingFee + registrationFee
+  
+  // Discord Negotiation Channel
+  discordChannelId    String?             @unique
+  
+  // Request State
+  status              TransferRequestStatus @default(PENDING)
+  
+  // Timestamps
+  sentAt              DateTime            @default(now())
+  acceptedAt          DateTime?
+  declinedAt          DateTime?
+  cancelledAt         DateTime?
+  
+  // Relations
+  sendingCaptain      User                @relation("TransferRequestSender", fields: [sendingCaptainId], references: [id])
+  receivingPlayer     User                @relation("TransferRequestReceiver", fields: [receivingPlayerId], references: [id])
+  targetSquad         Squad               @relation(fields: [targetSquadId], references: [id])
+  
+  @@index([sendingCaptainId])
+  @@index([receivingPlayerId])
+  @@index([status])
+}
+```
+
+**Discord Channel Lifecycle:**
+- Created: When Captain initiates transfer interest
+- Deleted: After transfer accepted/rejected OR 7-day timeout
+
+---
+
+### TransferWindow
+
+**Purpose:** Competition-specific transfer windows (2× per season)
+
+```prisma
+model TransferWindow {
+  id              String      @id @default(cuid())
+  competitionId   String
+  
+  // Window Period
+  startDate       DateTime
+  endDate         DateTime
+  
+  // Status
+  isActive        Boolean     @default(false)
+  
+  // Relations
+  competition     Competition @relation(fields: [competitionId], references: [id])
+  
+  @@index([competitionId])
+  @@index([isActive])
+}
+```
+
+---
+
+### PlayerCard
+
+**Purpose:** Auto-generated player cards (Basic tier)
+
+```prisma
+model PlayerCard {
+  id                String    @id @default(cuid())
+  playerId          String
+  
+  // Card Design
+  position          Position
+  backgroundColor   String    // Based on grade/tier
+  
+  // Stats Display
+  overallRating     Int       // Player valuation
+  stats             Json      // {goals, assists, matches, rating, pac, sho, pas, dri, def, phy}
+  
+  // Tier Badge
+  tierBadge         String?   // Pro/Premium badge
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  player            User      @relation(fields: [playerId], references: [id])
+  
+  @@index([playerId])
+}
+```
+
+---
+
+### CustomPlayerCard
+
+**Purpose:** User-uploaded custom player card designs (Pro/Premium)
+
+```prisma
+model CustomPlayerCard {
+  id                String    @id @default(cuid())
+  playerId          String
+  
+  // Card Image
+  cardImageUrl      String
+  thumbnailUrl      String
+  
+  // Position Context
+  position          Position  // Primary or secondary
+  
+  // Tier Limits
+  slotNumber        Int       // 1 for Pro, 1-2 for Premium
+  
+  // Approval
+  approved          Boolean   @default(false)
+  approvedBy        String?   // Admin User ID
+  approvedAt        DateTime?
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  player            User      @relation(fields: [playerId], references: [id])
+  
+  @@unique([playerId, slotNumber])
+  @@index([playerId])
+}
+```
+
+**Tier Limits:** Pro = 1 card (primary position), Premium = 2 cards (primary + secondary)
+
+---
+
+### AttributeScreenshot
+
+**Purpose:** FC25 in-game attribute screenshots (optional, weekly upload limit)
+
+```prisma
+model AttributeScreenshot {
+  id                String    @id @default(cuid())
+  playerId          String
+  
+  // Screenshot Image
+  screenshotUrl     String
+  thumbnailUrl      String
+  
+  // Upload Tracking
+  uploadedAt        DateTime  @default(now())
+  
+  // 7-Day Cooldown
+  nextUploadAllowed DateTime  // uploadedAt + 7 days
+  
+  // Relations
+  player            User      @relation(fields: [playerId], references: [id])
+  
+  @@index([playerId])
+  @@index([uploadedAt])
+}
+```
+
+**Cooldown:** Max 1 upload per 7 days. Tier limits: Basic = 0, Pro = 2 max, Premium = 4 max
+
+---
+
+### XpTransaction
+
+**Purpose:** Audit trail for all XP earnings
+
+```prisma
+model XpTransaction {
+  id                String          @id @default(cuid())
+  playerId          String
+  
+  // XP Details
+  amount            Int
+  source            XpSource        // MATCH_WIN, GOAL_SCORED, CHALLENGE_COMPLETE, etc.
+  
+  // Context
+  matchId           String?
+  challengeId       String?
+  description       String?
+  
+  // Balance Tracking
+  balanceBefore     Int
+  balanceAfter      Int
+  
+  // Timestamp
+  createdAt         DateTime        @default(now())
+  
+  // Relations
+  player            User            @relation(fields: [playerId], references: [id])
+  
+  @@index([playerId])
+  @@index([source])
+  @@index([createdAt])
+}
+```
+
+**XP Sources:** See XP_SYSTEM.md for complete list
+
+---
+
+### CoinTransaction
+
+**Purpose:** Audit trail for all coin movements
+
+```prisma
+model CoinTransaction {
+  id                String          @id @default(cuid())
+  
+  // Transaction Parties
+  userId            String?         // Player wallet
+  squadId           String?         // Squad bank
+  
+  // Transaction Details
+  amount            Int
+  transactionType   CoinTransactionType
+  
+  // Payment Processing
+  platform          Platform?       // IOS or ANDROID (for purchases)
+  transactionId     String?         @unique // Receipt ID from App Store/Google Play
+  
+  // Balance Tracking
+  balanceBefore     Int
+  balanceAfter      Int
+  
+  // Context
+  description       String?
+  metadata          Json?           // {matchId, contractId, challengeId, etc.}
+  
+  // Timestamp
+  createdAt         DateTime        @default(now())
+  
+  // Relations
+  user              User?           @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([squadId])
+  @@index([transactionType])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+```
+
+**Transaction Types:** PURCHASE, CONTRACT_BREAK, TRANSFER_FEE, REGISTRATION, CHALLENGE, LATE_LINEUP, etc.
+
+---
+
+### SquadBankTransaction
+
+**Purpose:** Audit trail for squad bank operations
+
+```prisma
+model SquadBankTransaction {
+  id                String          @id @default(cuid())
+  squadId           String
+  
+  // Transaction Details
+  amount            Int
+  transactionType   SquadBankTransactionType
+  
+  // Initiated By
+  initiatedBy       String          // Captain User ID
+  
+  // Balance Tracking
+  balanceBefore     Int
+  balanceAfter      Int
+  
+  // Context
+  description       String?
+  metadata          Json?
+  
+  // Timestamp
+  createdAt         DateTime        @default(now())
+  
+  // Relations
+  squad             Squad           @relation(fields: [squadId], references: [id])
+  
+  @@index([squadId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+```
+
+---
+
+### CashTransaction
+
+**Purpose:** Audit trail for cash/prize money movements (separate from coins)
+
+```prisma
+model CashTransaction {
+  id                String              @id @default(cuid())
+  userId            String
+  
+  // Transaction Details
+  amount            Decimal
+  transactionType   CashTransactionType
+  
+  // Balance Tracking
+  balanceBefore     Decimal
+  balanceAfter      Decimal
+  
+  // Context
+  description       String?
+  metadata          Json?               // {competitionId, matchId, withdrawalMethod, etc.}
+  
+  // Withdrawal Tracking
+  withdrawalStatus  WithdrawalStatus?   // PENDING, COMPLETED, FAILED (for withdrawals)
+  
+  // Timestamp
+  createdAt         DateTime            @default(now())
+  
+  // Relations
+  user              User                @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+```
+
+**Transaction Types:** PRIZE_AWARDED, WITHDRAWAL_REQUESTED, WITHDRAWAL_COMPLETED, REFUND
+
+---
+
+### Challenge
+
+**Purpose:** Challenge templates (Easy/Medium/Difficult/Squad)
+
+```prisma
+model Challenge {
+  id                String            @id @default(cuid())
+  
+  // Challenge Details
+  title             String
+  description       String
+  difficulty        ChallengeDifficulty // EASY, MEDIUM, DIFFICULT, SQUAD
+  
+  // Rewards
+  xpReward          Int               // 6, 10, 20, 10 based on difficulty
+  coinReward        Int?              // Medium = 1 coin, Difficult = 2 coins
+  
+  // Challenge Type
+  challengeType     ChallengeType     // MATCH_BASED, WEEKLY, SEASONAL
+  
+  // Validation Logic
+  validationRules   Json              // {metric, operator, threshold}
+  
+  // Active Status
+  isActive          Boolean           @default(true)
+  
+  // Timestamps
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  // Relations
+  playerChallenges  PlayerChallenge[]
+  
+  @@index([difficulty])
+  @@index([isActive])
+}
+```
+
+**Validation Rules Example:**
+```json
+{
+  "metric": "goals",
+  "operator": ">=",
+  "threshold": 3,
+  "timeframe": "week"
+}
+```
+
+---
+
+### PlayerChallenge
+
+**Purpose:** Player's active/completed challenges
+
+```prisma
+model PlayerChallenge {
+  id                String              @id @default(cuid())
+  playerId          String
+  challengeId       String
+  
+  // Activation
+  activatedAt       DateTime            @default(now())
+  activationCost    Int                 // 0 for Premium, 1 for Basic/Pro
+  
+  // Status
+  status            PlayerChallengeStatus @default(ACTIVE)
+  
+  // Progress Tracking
+  currentProgress   Int                 @default(0)
+  targetProgress    Int
+  
+  // Completion
+  completedAt       DateTime?
+  xpAwarded         Int?
+  coinAwarded       Int?
+  
+  // Relations
+  player            User                @relation(fields: [playerId], references: [id])
+  challenge         Challenge           @relation(fields: [challengeId], references: [id])
+  
+  @@index([playerId])
+  @@index([challengeId])
+  @@index([status])
+}
+```
+
+**Refresh Logic:** Refreshing challenges removes all `ACTIVE` challenges and provides new set
+
+---
+
+### Notification
+
+**Purpose:** Push notifications and in-app alerts
+
+```prisma
+model Notification {
+  id                String              @id @default(cuid())
+  userId            String
+  
+  // Notification Details
+  type              NotificationType
+  title             String
+  message           String
+  
+  // Deeplink
+  actionUrl         String?
+  
+  // Attachments
+  attachments       Json?               // [{type, url, size}]
+  
+  // Read Status
+  isRead            Boolean             @default(false)
+  readAt            DateTime?
+  
+  // Timestamp
+  createdAt         DateTime            @default(now())
+  
+  // Relations
+  user              User                @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+```
+
+**Types:** CONTRACT_OFFER, TRANSFER_REQUEST, MATCH_REMINDER, RESULT_VERIFIED, etc.
+
+---
+
+### AdminApplication
+
+**Purpose:** Player applications to become platform admin
+
+```prisma
+model AdminApplication {
+  id                String              @id @default(cuid())
+  playerId          String
+  
+  // Application Answers
+  audienceSize      String              // "100+", "200+", "500+", "1000+"
+  squadCount        String              // "10+", "20+", "50+", "100+"
+  acceptsDiligence  Boolean
+  preferredContact  ContactMethod       // GMAIL, WHATSAPP, TWITTER
+  
+  // Status
+  status            ApplicationStatus   @default(PENDING)
+  
+  // Review
+  reviewedBy        String?             // Admin User ID
+  reviewedAt        DateTime?
+  reviewNotes       String?
+  
+  // Timestamps
+  createdAt         DateTime            @default(now())
+  
+  // Relations
+  player            User                @relation(fields: [playerId], references: [id])
+  
+  @@index([playerId])
+  @@index([status])
+}
+```
+
+---
+
+### MemoryEdit
+
+**Purpose:** User-controlled memory edits for Claude AI memory system
+
+```prisma
+model MemoryEdit {
+  id                String    @id @default(cuid())
+  userId            String
+  
+  // Edit Content
+  editText          String    // User-provided memory edit (max 200 chars)
+  lineNumber        Int       // Position in user's memory list (1-30)
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  user              User      @relation(fields: [userId], references: [id])
+  
+  @@unique([userId, lineNumber])
+  @@index([userId])
+}
+```
+
+**Limits:** Max 30 edits per user, max 200 chars per edit
+
+---
+
+## ENUMS
+
+```prisma
+enum AuthProvider {
+  EMAIL_PASSWORD
+  GOOGLE
+  APPLE
+}
+
+enum UserRole {
+  USER          // Incomplete setup
+  PLAYER        // Setup complete
+  VICE_CAPTAIN  // Assigned by Captain
+  CAPTAIN       // Squad owner
+  ADMIN         // Platform admin
+}
+
+enum SubscriptionTier {
+  BASIC         // Free
+  PRO           // £5/month
+  PREMIUM       // £10/month
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  GRACE_PERIOD
+  EXPIRED
+  CANCELLED
+}
+
+enum Platform {
+  IOS
+  ANDROID
+}
+
+enum Position {
+  GK
+  RB
+  CB
+  LB
+  RWB
+  LWB
+  CDM
+  CM
+  CAM
+  RM
+  LM
+  RW
+  LW
+  ST
+  CF
+  SS
+}
+
+enum Grade {
+  D  // 0-249 XP
+  C  // 250-799 XP
+  B  // 800-1,999 XP
+  A  // 2,000+ XP
+}
+
+enum ContractType {
+  INIT_CONTRACT  // NonCompSquad
+  COMP_CONTRACT  // CompSquad
+}
+
+enum ContractStatus {
+  PENDING
+  ACTIVE
+  DECLINED
+  TERMINATED
+  BROKEN
+}
+
+enum CompetitionType {
+  LEAGUE
+  CUP
+}
+
+enum CompetitionFormat {
+  KNOCKOUT
+  ROUND_ROBIN
+  LEAGUE_AND_KNOCKOUT
+}
+
+enum CompetitionStatus {
+  UPCOMING
+  REGISTRATION_OPEN
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum RegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum MatchType {
+  LEAGUE
+  CUP
+  FRIENDLY
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LINEUP_SUBMITTED
+  READY
+  LIVE
+  DONE
+  RESULT_SUBMITTED
+  VERIFIED
+  COMPLETED
+  FORFEIT
+}
+
+enum MatchSide {
+  HOME
+  AWAY
+}
+
+enum DisputeStatus {
+  NONE
+  PENDING
+  RESOLVED
+}
+
+enum TransferPoolStatus {
+  FREE_AGENT
+  TRANSFER_LISTED
+}
+
+enum TransferRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+enum ChallengeDifficulty {
+  EASY
+  MEDIUM
+  DIFFICULT
+  SQUAD
+}
+
+enum ChallengeType {
+  MATCH_BASED
+  WEEKLY
+  SEASONAL
+}
+
+enum PlayerChallengeStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum XpSource {
+  MATCH_WIN
+  MATCH_DRAW
+  MATCH_LOSS
+  GOAL_SCORED
+  ASSIST
+  CLEAN_SHEET
+  MATCH_RATING_HIGH
+  MATCH_RATING_GOOD
+  FULL_MATCH
+  PARTIAL_MATCH
+  NO_FOULS
+  TACKLE
+  MVP
+  CHALLENGE_EASY
+  CHALLENGE_MEDIUM
+  CHALLENGE_DIFFICULT
+  CHALLENGE_SQUAD
+  TEAM_WIN_STREAK
+  TEAM_GOALS_WEEK
+  TEAM_CLEAN_SHEETS
+  TEAM_UNBEATEN
+}
+
+enum CoinTransactionType {
+  PURCHASE
+  CONTRACT_BREAK
+  TRANSFER_FEE
+  REGISTRATION
+  CHALLENGE_UNLOCK
+  CHALLENGE_REWARD
+  LATE_LINEUP
+  SQUAD_PASS
+  REFUND
+  ADMIN_CREDIT
+}
+
+enum SquadBankTransactionType {
+  CAPTAIN_DEPOSIT
+  CONTRACT_FEE_RECEIVED
+  TRANSFER_FEE_RECEIVED
+  REGISTRATION_FEE
+  LATE_LINEUP_FEE
+  SQUAD_PASS_PURCHASE
+  TRANSFER_FEE_PAID
+  PLAYER_REGISTRATION
+}
+
+enum CashTransactionType {
+  PRIZE_AWARDED
+  WITHDRAWAL_REQUESTED
+  WITHDRAWAL_COMPLETED
+  REFUND
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum NotificationType {
+  CONTRACT_OFFER
+  CONTRACT_ACCEPTED
+  CONTRACT_DECLINED
+  TRANSFER_REQUEST
+  TRANSFER_ACCEPTED
+  MATCH_REMINDER
+  LINEUP_DUE
+  MATCH_READY
+  RESULT_SUBMITTED
+  RESULT_VERIFIED
+  DISPUTE_CREATED
+  DISPUTE_RESOLVED
+  CHALLENGE_COMPLETE
+  XP_EARNED
+  GRADE_PROMOTED
+  SUBSCRIPTION_RENEWAL
+  SUBSCRIPTION_CANCELLED
+}
+
+enum ContactMethod {
+  GMAIL
+  WHATSAPP
+  TWITTER
+}
+
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+```
+
+---
+
+## INDEXES
+
+**Critical Query Patterns:**
+
+```prisma
+// User lookups
+@@index([email])
+@@index([squadzId])
+@@index([discordUserId])
+@@index([subscriptionTier])
+@@index([currentGrade])
+@@index([role])
+
+// Squad lookups
+@@index([captainId])
+@@index([inviteCode])
+@@index([isCompSquad])
+
+// Contract queries
+@@index([playerId])
+@@index([squadId])
+@@index([competitionId])
+@@index([status])
+@@index([contractType])
+
+// Match queries
+@@index([competitionId])
+@@index([status])
+@@index([scheduledTime])
+
+// Transfer pool
+@@index([playerId])
+@@index([poolStatus])
+
+// Transaction audits
+@@index([userId])
+@@index([squadId])
+@@index([transactionType])
+@@index([createdAt])
+
+// Notification queries
+@@index([userId])
+@@index([isRead])
+@@index([createdAt])
+```
+
+---
+
+## CONSTRAINTS
+
+**Unique Constraints:**
+
+```prisma
+// User
+@@unique([email])
+@@unique([squadzId])
+@@unique([username])
+@@unique([googleId])
+@@unique([appleId])
+@@unique([discordUserId])
+
+// Squad
+@@unique([inviteCode])
+@@unique([discordChannelId])
+
+// Match
+@@unique([discordChannelId])
+
+// Competition Registration
+@@unique([competitionId, squadId])
+
+// Match Squad
+@@unique([matchId, side])
+
+// Match Lineup
+@@unique([matchId, squadId])
+
+// Match Participation
+@@unique([matchId, playerId])
+
+// Player Rating
+@@unique([matchId, raterPlayerId, ratedPlayerId])
+
+// Custom Player Card
+@@unique([playerId, slotNumber])
+
+// Transaction IDs (idempotency)
+@@unique([transactionId])
+
+// Memory Edit
+@@unique([userId, lineNumber])
+```
+
+**Foreign Key Cascades:**
+
+```prisma
+// Cascade deletes
+RefreshToken → User (onDelete: Cascade)
+
+// Restrict deletes (prevent orphans)
+Contract → User (onDelete: Restrict)
+Contract → Squad (onDelete: Restrict)
+Match → Competition (onDelete: Restrict)
+```
+
+---
+
+## STATE MACHINES
+
+### User Setup Progression
+
+```
+setupPagesCompleted: 0 → 1 → 2 → 3 → 4
+role: USER → PLAYER (when setupPagesCompleted = 4 AND setupComplete = true)
+```
+
+**Pages:**
+1. Player Details (nationality, location, favorite team, PSN ID, Known As name)
+2. Connect Discord (discordUserId required)
+3. Select Positions (primaryPosition, secondaryPosition)
+4. Upload Avatar (avatarUrl)
+
+**Validation:** `setupComplete = true` only when all 4 pages complete
+
+---
+
+### Squad Type Transition
+
+```
+isCompSquad: false (NonCompSquad) → true (CompSquad)
+```
+
+**Trigger:** First competition registration
+
+---
+
+### Contract Lifecycle
+
+```
+status: PENDING → ACTIVE → TERMINATED/BROKEN
+```
+
+**States:**
+- `PENDING`: Contract sent, awaiting player response
+- `ACTIVE`: Player accepted, contract in force
+- `DECLINED`: Player rejected
+- `TERMINATED`: Captain terminated (CompContract only)
+- `BROKEN`: Player broke contract
+
+---
+
+### Match Status Flow
+
+```
+SCHEDULED → LINEUP_SUBMITTED → READY → LIVE → DONE → 
+RESULT_SUBMITTED → VERIFIED → COMPLETED
+```
+
+**Conditional Paths:**
+- If mismatch in results → `DISPUTE_PENDING` → Admin review → `VERIFIED`
+- If forfeit → `FORFEIT` (skip result submission)
+
+---
+
+### Subscription Status
+
+```
+ACTIVE → GRACE_PERIOD → EXPIRED
+       → CANCELLED → EXPIRED
+```
+
+**Triggers:**
+- Payment fails → `GRACE_PERIOD` (3 days)
+- Grace period expires → `EXPIRED`
+- User cancels → `CANCELLED` (access until period_end) → `EXPIRED`
+
+---
+
+## VALIDATION RULES
+
+### Account Setup
+- Discord connection required before `setupComplete = true`
+- All 4 pages must be completed before Player role assignment
+- `setupPagesCompleted` must match completed page count
+
+### Squad Creation
+- Captain must be Player (setup complete)
+- Vice Captain auto-assigned to next member (NonCompSquad only)
+- Squad requires 5-14 players (roster limits)
+
+### Contract Sending
+- Captain can only send InitContract if squad is NonCompSquad
+- Captain can only send CompContract if squad is CompSquad
+- Squad must have available roster slots (< 14)
+
+### Competition Registration
+- Captain must be Pro or Premium tier
+- Vice Captain must be assigned and in same region (CompSquad only)
+- Squad must have 5+ players
+- Calculate Sub-Ineligible players based on tier limits
+- Apply registration fees accordingly
+
+### Match Lineup Submission
+- Captain AND Vice Captain must have Discord connected
+- Only CompContract players can be selected
+- Must select exactly 11 starting players
+- Can select up to 3 substitutes
+- Timeline validation (1hr standard, 30min hard deadline)
+
+### Transfer Pool
+- Free Agent: Player already paid break fee, no signing fee
+- Transfer Listed: Signing squad pays player valuation to previous squad
+- Competition lock: Cannot rejoin same competition after breaking contract
+
+### Challenge Activation
+- Premium tier: Free unlimited
+- Basic/Pro tier: 1 coin per challenge
+- Only one active instance of same challenge per player
+
+### Coin Transactions
+- Verify transactionId uniqueness (idempotency)
+- Validate sufficient balance before deduction
+- Use database transactions for balance updates
+
+---
+
+## SOFT DELETES
+
+**Tables with Soft Delete:**
+- User (deletedAt)
+- Squad (deletedAt)
+
+**Rationale:** Preserve historical data for analytics, prevent cascade deletion issues
+
+**Query Pattern:**
+```sql
+WHERE deletedAt IS NULL
+```
+
+---
+
+## AUDIT TRAILS
+
+**Financial Transactions:**
+- XpTransaction (all XP movements)
+- CoinTransaction (all coin movements)
+- CashTransaction (all prize money/cash movements)
+- SquadBankTransaction (all squad bank operations)
+
+**Balance Tracking:**
+- `balanceBefore` and `balanceAfter` fields
+- Enables balance reconciliation and fraud detection
+
+---
+
+## MIGRATION STRATEGY
+
+**Prisma Migration Rules:**
+- Never edit applied migrations
+- Never rollback migrations in production
+- Use Prisma's migration workflow (`prisma migrate dev` for development, `prisma migrate deploy` for production)
+- For breaking changes: Add fields as optional first, backfill data, then make required in subsequent migration
+
+---
+
+## SEEDING STRATEGY
+
+**Development Seed (`prisma/seed.ts`):**
+- Test users (all roles)
+- Sample squads with rosters
+- Sample competitions with registrations
+- Sample matches with results
+- Coin and XP transactions
+
+**E2E Test Seed (`prisma/seed.test.ts`):**
+- Predictable test accounts
+- Complete workflow data (signup → match → transfer)
+- Reset before each CI run
+
+**Production:**
+- Real data only
+- Never seeded
+
+---
+
+## PERFORMANCE OPTIMIZATION
+
+**Index Strategy:**
+- Index all foreign keys
+- Index frequently filtered fields (status, type, createdAt)
+- Index fields used in WHERE clauses
+
+**Query Optimization:**
+- Use `select` to limit returned fields
+- Use `include` strategically (avoid N+1 queries)
+- Paginate large result sets
+- Use cursor-based pagination for infinite scroll
+
+**Connection Pooling:**
+- Development: 10 connections
+- Production: 20-50 connections (scale based on load)
+
+---
+
+## RELATED DOCUMENTATION
+
+- **API_REQUIREMENTS.md** - Endpoint definitions and screen mappings
+- **GAME_RULES.md** - Business rules and validation constraints
+- **AUTH_STRATEGY.md** - Authentication flows and role management
+- **MONETIZATION.md** - Subscription tiers and coin economy
+- **DISCORD_INTEGRATION.md** - Discord OAuth and channel management
+- **XP_SYSTEM.md** - XP calculation and grade progression
+- **PLAYER_VALUATION.md** - Dynamic valuation formulas
+- **CHALLENGES.md** - Challenge system and rewards
+- **TRANSFER_MARKET.md** - Transfer flows and fee calculations
+
+---
+
+## CRITICAL NOTES
+
+**Discord Channel IDs:**
+- Store Discord channel IDs (not URLs) for match rooms, squad channels, transfer chats
+- Channel IDs used to generate deep links in app
+- Channels created/deleted via Discord Bot API, tracked in database
+
+**Transaction Idempotency:**
+- Always check `transactionId` uniqueness before processing App Store/Google Play receipts
+- Prevents duplicate coin credits from retried requests
+
+**Balance Updates:**
+- Always wrap balance update + transaction record in single database transaction
+- Lock wallets in consistent order (player first, squad second) to avoid deadlocks
+
+**State Machine Validation:**
+- Validate current state before state transition
+- Log all state transitions for audit trail
+- Use database constraints to enforce valid states
+
+**Soft Deletes:**
+- Never hard delete users or squads
+- Query with `WHERE deletedAt IS NULL`
+- Preserve data for analytics and compliance

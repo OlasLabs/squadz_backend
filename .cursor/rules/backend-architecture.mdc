@@ -1,0 +1,1020 @@
+---
+description: 'NestJS module organization, folder structure, endpoint routing patterns, request flow (controller→guard→service→prisma), error response formats, and database transaction patterns. Applies to all backend code generation.'
+alwaysApply: true
+---
+
+# BACKEND ARCHITECTURE
+
+## DESCRIPTION
+
+Backend architecture for SQUADZ (NestJS + Prisma + PostgreSQL). Defines module organization, endpoint patterns, request flow, error handling, and transaction patterns. Use this as the authoritative source for understanding architectural boundaries, code organization, and data flow patterns.
+
+**Scope:**
+
+- 13 resource-based module definitions and responsibilities
+- Project structure and file organization
+- RESTful endpoint conventions
+- Request processing pipeline
+- Error response standards
+- Database transaction patterns
+
+**Related Docs:**
+
+- `db-schema.mdc` - Database tables and relationships
+- `api-requirements.mdc` - Complete endpoint specifications and RBAC matrix
+- `game-rules.mdc` - Business logic and validation rules
+- `auth-strategy.mdc` - Authentication and authorization flows
+- `tech-stack.mdc` - Technology choices and infrastructure
+
+---
+
+## MODULE DEFINITIONS
+
+### Architecture Principles
+
+**Resource-Based Modules (Not Role-Based):**
+
+- Each module represents a distinct resource domain
+- Modules own their data and business logic
+- RBAC is implemented via guards, not module structure
+- Clear boundaries prevent tight coupling
+
+**13 Core Modules:**
+
+---
+
+### 1. Auth Module
+
+**Resource:** Authentication tokens and sessions  
+**Base Path:** `/auth`
+
+**Responsibilities:**
+
+- User registration (email/password, OAuth)
+- Login and logout
+- JWT token generation and refresh
+- Email verification (OTP)
+- Password reset flow
+- Token validation
+- OAuth flows (Google, Apple) - initiation and callback handling
+
+**Owns:**
+
+- RefreshToken table
+- JWT generation logic
+- OAuth provider integration (Google, Apple)
+- Email verification OTP generation
+- OAuth state management and callback processing
+
+**Does NOT Own:**
+
+- User profile data (Users module)
+- Role management (Users module)
+- Permission checks (Guards)
+
+---
+
+### 2. Users Module
+
+**Resource:** User accounts and player profiles  
+**Base Path:** `/users`
+
+**Responsibilities:**
+
+- Account setup (4-page progression)
+- User profile management
+- Player statistics and verification
+- XP progression and grade ranking
+- Player valuation calculation
+- Subscription tier management
+- Player cards (basic, custom)
+- FC25 attribute screenshots
+- Referral system
+- Admin applications
+
+**Owns:**
+
+- User table (core account data)
+- PlayerCard table
+- CustomPlayerCard table
+- AttributeScreenshot table
+- XpTransaction table (XP audit trail)
+- AdminApplication table
+- Account setup state tracking
+
+**Does NOT Own:**
+
+- Authentication logic (Auth module)
+- Squad membership (Squads module)
+- Contracts (Contracts module)
+- Match participation (Matches module)
+
+---
+
+### 3. Squads Module
+
+**Resource:** Team entities and roster management  
+**Base Path:** `/squads`
+
+**Responsibilities:**
+
+- Squad creation (NonCompSquad)
+- Squad profile management
+- Roster management (5-14 players)
+- Leadership assignment (Captain, Vice Captain)
+- Squad bank operations
+- Formation management
+- Squad state transitions (NonCompSquad → CompSquad)
+- Squad termination
+
+**Owns:**
+
+- Squad table
+- SquadBankTransaction table
+- Squad Discord team channel tracking
+- Roster size validation
+- Leadership hierarchy
+
+**Does NOT Own:**
+
+- Player contracts (Contracts module)
+- Match scheduling (Matches module)
+- Competition registration (Competitions module)
+- Player profiles (Users module)
+
+---
+
+### 4. Contracts Module
+
+**Resource:** Player-squad contracts  
+**Base Path:** `/contracts`
+
+**Responsibilities:**
+
+- Contract creation (InitContract, CompContract)
+- Contract offers and acceptance
+- Contract terms management (positions, winnings share)
+- Contract breaking with fee calculation
+- Contract state transitions
+
+**Owns:**
+
+- Contract table
+- Contract lifecycle (PENDING → ACTIVE → TERMINATED/BROKEN)
+- Fee calculation logic (tier-based)
+- Contract validation rules
+
+**Does NOT Own:**
+
+- Squad roster updates (Squads module)
+- Transfer market logic (Transfers module)
+- Player valuation (Users module)
+- Coin transactions (Coins module)
+
+---
+
+### 5. Competitions Module
+
+**Resource:** Tournaments, leagues, and cups  
+**Base Path:** `/competitions`
+
+**Responsibilities:**
+
+- Competition creation and management
+- Squad registration processing
+- Division and table management
+- Competition rules and metadata
+- Knockout bracket generation
+- Waitlist/draft league registration
+
+**Owns:**
+
+- Competition table
+- CompetitionRegistration table
+- Division table
+- Sub-Ineligible player tracking
+- Squad Pass usage tracking
+- Competition status lifecycle
+
+**Does NOT Own:**
+
+- Match scheduling (Matches module)
+- Squad profiles (Squads module)
+- Player registration fees (Coins module)
+
+---
+
+### 6. Matches Module
+
+**Resource:** Match fixtures and results  
+**Base Path:** `/matches`
+
+**Responsibilities:**
+
+- Match scheduling and fixture generation
+- Lineup submission (dual-captain)
+- Match coordination status tracking
+- Result submission and verification
+- Dispute creation and resolution
+- Player ratings (post-match)
+- Stream link management
+- XP distribution for match performance
+
+**Owns:**
+
+- Match table
+- MatchSquad table (home/away)
+- MatchLineup table
+- MatchParticipation table
+- PlayerRating table
+- Dispute table
+- Match Discord channel tracking
+- Match status state machine
+
+**Does NOT Own:**
+
+- Competition tables (Competitions module)
+- Squad profiles (Squads module)
+- Player XP totals (Users module)
+
+---
+
+### 7. Transfers Module
+
+**Resource:** Transfer market and player movement  
+**Base Path:** `/transfers`
+
+**Responsibilities:**
+
+- Transfer pool management (Free Agent, Transfer Listed)
+- Transfer request creation and negotiation
+- Transfer window management
+- Transfer fee calculation
+- Pool entry/exit validation
+- Discord negotiation channel tracking
+
+**Owns:**
+
+- TransferPoolEntry table
+- TransferRequest table
+- TransferWindow table
+- Transfer Discord channel tracking
+- Transfer eligibility validation
+
+**Does NOT Own:**
+
+- Player valuation (Users module)
+- Contract creation (Contracts module)
+- Squad roster updates (Squads module)
+- Coin transactions (Coins module)
+
+---
+
+### 8. Coins Module
+
+**Resource:** Virtual currency and transactions  
+**Base Path:** `/coins`
+
+**Responsibilities:**
+
+- Coin purchase processing (App Store/Google Play)
+- Receipt verification (iOS, Android)
+- Coin wallet management
+- Coin transaction ledger
+- Squad bank transfers
+- Prize money withdrawals (cash)
+- Subscription webhook handling
+
+**Owns:**
+
+- CoinTransaction table
+- CashTransaction table (prize money)
+- Transaction idempotency enforcement
+- Receipt verification logic
+- Webhook handlers (Apple, Google)
+
+**Does NOT Own:**
+
+- User subscription tiers (Users module)
+- Squad bank balance (Squads module)
+- Fee calculation (delegated to requesting modules)
+
+---
+
+### 9. Challenges Module
+
+**Resource:** In-game challenges and completions  
+**Base Path:** `/challenges`
+
+**Responsibilities:**
+
+- Challenge template management
+- Challenge activation (tier-based costs)
+- Challenge progress tracking
+- Challenge completion validation
+- Challenge refresh operations
+- XP reward distribution
+
+**Owns:**
+
+- Challenge table
+- PlayerChallenge table
+- Challenge validation rules
+- Activation cost calculation
+
+**Does NOT Own:**
+
+- XP balance updates (Users module)
+- Coin deductions (Coins module)
+- Match performance data (Matches module)
+
+---
+
+### 10. Discord Module
+
+**Resource:** Discord OAuth and channel management  
+**Base Path:** `/discord`
+
+**Responsibilities:**
+
+- Discord OAuth connection (account setup)
+- Discord connection status tracking
+- Squad team channel creation (via Bot API)
+- Match coordination channel creation (via Bot API)
+- Transfer negotiation channel creation (via Bot API)
+- Channel lifecycle management
+- Deep link generation
+
+**Owns:**
+
+- Discord OAuth flow
+- Discord Bot API integration
+- Channel creation/deletion logic
+- Channel ID tracking across tables
+
+**Does NOT Own:**
+
+- User account data (Users module)
+- Squad data (Squads module)
+- Match data (Matches module)
+- Chat message storage (Discord hosts)
+
+---
+
+### 11. Media Module
+
+**Resource:** File uploads and media assets  
+**Base Path:** `/media`
+
+**Responsibilities:**
+
+- Avatar image upload and processing
+- FC25 attribute screenshot upload
+- Player card image upload (custom)
+- Video proof upload (match disputes, stats)
+- Image optimization (Sharp)
+- Background removal (Removal.ai)
+- S3 storage management
+
+**Owns:**
+
+- Media processing pipeline
+- S3 upload/download operations
+- Image optimization logic
+- Temporary file cleanup
+
+**Does NOT Own:**
+
+- User avatar URL (Users module stores URL)
+- Screenshot URL storage (Users module)
+- File approval workflow (admin review separate)
+
+---
+
+### 12. Notifications Module
+
+**Resource:** Push notifications and in-app alerts  
+**Base Path:** `/notifications`
+
+**Responsibilities:**
+
+- Notification creation and dispatch
+- Push notification delivery (Expo)
+- Notification history tracking
+- Notification preferences management
+- Device token registration
+- Read/unread status tracking
+
+**Owns:**
+
+- Notification table
+- Push notification service integration
+- Delivery tracking
+
+**Does NOT Own:**
+
+- Event triggering (triggered by other modules)
+- Deep link generation (handled by originating modules)
+
+---
+
+### 13. Analytics Module
+
+**Resource:** Aggregated metrics and leaderboards  
+**Base Path:** `/analytics`
+
+**Responsibilities:**
+
+- Platform statistics (admin)
+- Player leaderboards (XP, goals, assists, clean sheets)
+- Squad performance metrics
+- Competition insights
+- Transfer market trends
+- User performance analytics
+
+**Owns:**
+
+- Aggregation queries
+- Leaderboard calculation logic
+- Caching strategies for expensive queries
+
+**Does NOT Own:**
+
+- Raw data (read-only from other modules)
+- Data modification (analytics is read-only)
+
+---
+
+## PROJECT STRUCTURE
+
+### Folder Organization
+
+```
+src/
+├── main.ts                          # Application entry point
+├── app.module.ts                    # Root module
+├── auth/                            # Auth module
+│   ├── auth.module.ts
+│   ├── auth.controller.ts
+│   ├── auth.service.ts
+│   ├── dto/                         # Request/response DTOs
+│   │   ├── register.dto.ts
+│   │   ├── login.dto.ts
+│   │   └── verify-email.dto.ts
+│   ├── strategies/                  # Passport strategies
+│   │   ├── jwt.strategy.ts
+│   │   └── oauth.strategy.ts
+│   └── guards/                      # Auth-specific guards
+│       └── jwt-auth.guard.ts
+├── users/                           # Users module
+│   ├── users.module.ts
+│   ├── users.controller.ts
+│   ├── users.service.ts
+│   ├── users.service.spec.ts        # Unit tests
+│   └── dto/
+├── squads/                          # Squads module
+│   └── ...
+├── contracts/                       # Contracts module
+│   └── ...
+├── competitions/                    # Competitions module
+│   └── ...
+├── matches/                         # Matches module
+│   └── ...
+├── transfers/                       # Transfers module
+│   └── ...
+├── coins/                           # Coins module
+│   └── ...
+├── challenges/                      # Challenges module
+│   └── ...
+├── discord/                         # Discord module
+│   └── ...
+├── media/                           # Media module
+│   └── ...
+├── notifications/                   # Notifications module
+│   └── ...
+├── analytics/                       # Analytics module
+│   └── ...
+├── common/                          # Shared code
+│   ├── guards/                      # Global guards
+│   │   ├── roles.guard.ts
+│   │   ├── setup-complete.guard.ts
+│   │   └── tier-limit.guard.ts
+│   ├── decorators/                  # Custom decorators
+│   │   ├── roles.decorator.ts
+│   │   └── current-user.decorator.ts
+│   ├── filters/                     # Exception filters
+│   │   └── http-exception.filter.ts
+│   ├── interceptors/                # Global interceptors
+│   │   └── transform.interceptor.ts
+│   ├── pipes/                       # Validation pipes
+│   │   └── validation.pipe.ts
+│   └── enums/                       # Shared enums
+│       ├── user-role.enum.ts
+│       ├── contract-type.enum.ts
+│       └── match-status.enum.ts
+├── prisma/                          # Prisma module
+│   ├── prisma.module.ts
+│   └── prisma.service.ts
+└── config/                          # Configuration
+    └── config.module.ts
+
+test/
+├── auth.e2e-spec.ts                 # Auth E2E tests
+├── users.e2e-spec.ts                # Users E2E tests
+├── squads.e2e-spec.ts               # Squads E2E tests
+├── contracts.e2e-spec.ts            # Contracts E2E tests
+├── competitions.e2e-spec.ts         # Competitions E2E tests
+├── matches.e2e-spec.ts              # Matches E2E tests
+├── transfers.e2e-spec.ts            # Transfers E2E tests
+├── coins.e2e-spec.ts                # Coins E2E tests
+├── challenges.e2e-spec.ts           # Challenges E2E tests
+└── helpers/
+    ├── auth.helper.ts               # Reusable auth helpers
+    ├── setup.ts                     # Global test setup
+    └── teardown.ts                  # Global test cleanup
+
+prisma/
+├── schema.prisma                    # Database schema
+├── migrations/                      # Migration files
+├── seed.ts                          # Development seed
+└── seed.test.ts                     # E2E test seed
+```
+
+---
+
+### File Naming Conventions
+
+**Modules:**
+
+- `<resource>.module.ts` - Module definition
+- `<resource>.controller.ts` - HTTP endpoints
+- `<resource>.service.ts` - Business logic
+
+**DTOs:**
+
+- `create-<resource>.dto.ts` - Creation payload
+- `update-<resource>.dto.ts` - Update payload
+- `<resource>-response.dto.ts` - Response shape
+
+**Guards:**
+
+- `<name>.guard.ts` - Custom guards
+- Example: `roles.guard.ts`, `setup-complete.guard.ts`
+
+**Enums:**
+
+- `<name>.enum.ts` - TypeScript enums
+- Match Prisma enum names
+
+---
+
+## ENDPOINT ORGANIZATION
+
+### RESTful Conventions
+
+**Resource-Based Routing:**
+
+```
+GET    /users/:id              # Get user
+PATCH  /users/:id              # Update user
+DELETE /users/:id              # Delete user
+
+GET    /squads/:id             # Get squad
+PATCH  /squads/:id             # Update squad
+DELETE /squads/:id             # Delete squad
+
+GET    /matches/:id            # Get match
+POST   /matches                # Create match (admin)
+```
+
+**Nested Resources:**
+
+```
+GET    /squads/:id/roster      # Squad's roster
+GET    /squads/:id/formation   # Squad's formation
+GET    /users/:id/contracts    # User's contracts
+GET    /matches/:id/lineup     # Match lineup
+```
+
+**Collection Filtering:**
+
+```
+GET    /matches?status=upcoming&squadId=123
+GET    /users/search?query=John
+GET    /competitions?region=Africa&status=open
+```
+
+---
+
+### Action Endpoints (Non-CRUD)
+
+Use action endpoints when operation doesn't fit standard CRUD:
+
+**State Transitions:**
+
+```
+PATCH  /matches/:id/ready      # Mark captain ready
+PATCH  /matches/:id/done       # Mark match done
+POST   /contracts/:id/accept   # Accept contract
+POST   /contracts/:id/decline  # Decline contract
+POST   /contracts/:id/break    # Break contract
+```
+
+**Complex Operations:**
+
+```
+POST   /users/:id/setup               # Complete account setup
+POST   /auth/oauth/google             # Initiate Google OAuth
+POST   /auth/oauth/google/callback    # Handle Google OAuth callback
+POST   /auth/oauth/apple              # Initiate Apple OAuth
+POST   /auth/oauth/apple/callback     # Handle Apple OAuth callback
+POST   /discord/connect               # Initiate Discord OAuth
+POST   /discord/callback              # Handle Discord OAuth callback
+POST   /coins/purchase/verify         # Verify purchase receipt
+POST   /matches/:id/disputes          # Create dispute
+POST   /challenges/:id/activate       # Activate challenge
+```
+
+**Action Naming:**
+
+- Use verbs for actions: `/accept`, `/decline`, `/activate`
+- Use nouns for sub-resources: `/lineup`, `/roster`, `/formation`
+- Avoid: `/getSquad`, `/updateUser`, `/deleteMatch` (use HTTP verbs)
+
+---
+
+### URL Naming Standards
+
+**Use:**
+
+- Plural nouns: `/users`, `/squads`, `/matches`
+- Lowercase with hyphens: `/transfer-requests`, `/match-lineups`
+- Resource IDs in path: `/users/:id`, `/squads/:squadId`
+
+**Avoid:**
+
+- Verbs in resource URLs: `/getUser`, `/createSquad`
+- Camel case: `/transferRequests`
+- Underscores: `/transfer_requests`
+
+---
+
+## REQUEST FLOW
+
+### Standard Request Pipeline
+
+```
+1. HTTP Request
+   ↓
+2. Global Guards (JWT, Rate Limiting)
+   ↓
+3. Controller (Route Handler)
+   ↓
+4. Route-Specific Guards (Roles, Setup, Tier Limits)
+   ↓
+5. Validation Pipe (DTO validation)
+   ↓
+6. Service Layer (Business Logic)
+   ↓
+7. Prisma Service (Database Operations)
+   ↓
+8. Response Interceptor (Transform)
+   ↓
+9. HTTP Response
+```
+
+---
+
+### Guard Execution Order
+
+**1. Global Guards (Applied in main.ts):**
+
+- JWT Authentication Guard (validates access token)
+- Rate Limiting Guard (prevents abuse)
+
+**2. Controller-Level Guards:**
+
+- Applied to entire controller via `@UseGuards()`
+- Example: `@UseGuards(RolesGuard)` on controller
+
+**3. Route-Level Guards:**
+
+- Applied to specific endpoints via `@UseGuards()`
+- More specific than controller-level
+- Example: `@UseGuards(SetupCompleteGuard)` on player-only routes
+
+**Guard Evaluation:**
+
+- All guards must pass for request to proceed
+- First guard failure returns 403 Forbidden
+- Guards execute in order: Global → Controller → Route
+
+---
+
+### Permission Validation Flow
+
+**Example: PATCH /squads/:id (Captain only)**
+
+```
+1. JwtAuthGuard verifies access token → extracts userId, role
+2. RolesGuard checks if user has required role
+3. SquadOwnershipGuard validates user is Captain of :id squad
+4. ValidationPipe validates request body DTO
+5. SquadsService.update() executes business logic
+6. PrismaService updates database
+7. Response returned with updated squad data
+```
+
+**Conditional Permissions (OWN, SQUAD):**
+
+`OWN`: Validate `userId` from token matches `:id` in route
+
+```
+GET /users/:id → Check token.userId === params.id
+```
+
+`SQUAD`: Validate user is Captain of `squadId`
+
+```
+PATCH /squads/:id → Check token.userId === squad.captainId
+```
+
+`CONDITIONAL`: Business rules apply (see game-rules.mdc)
+
+```
+POST /contracts → Check tier limits, roster size, etc.
+```
+
+---
+
+### Service Layer Responsibilities
+
+**Services handle:**
+
+- Business logic and validation
+- Database transactions (via Prisma)
+- Inter-service communication (dependency injection)
+- State machine transitions
+- Error handling (throw exceptions)
+
+**Services do NOT handle:**
+
+- HTTP concerns (status codes, headers)
+- Request/response transformation (controllers)
+- Authentication (guards)
+- Authorization (guards)
+
+**Example Service Method Pattern:**
+
+```typescript
+// Good: Focused business logic
+async breakContract(userId: string, contractId: string): Promise<Contract> {
+  // 1. Fetch contract
+  // 2. Validate user owns contract
+  // 3. Calculate break fee (tier-based)
+  // 4. Start transaction
+  // 5. Deduct fee from user balance
+  // 6. Credit fee to squad bank
+  // 7. Update contract status
+  // 8. Add to transfer pool
+  // 9. Commit transaction
+  // 10. Return updated contract
+}
+```
+
+---
+
+## ERROR RESPONSE FORMAT
+
+### Standard Error Structure
+
+**All error responses follow this JSON shape:**
+
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "error": "Bad Request",
+  "timestamp": "2025-12-29T10:30:00.000Z",
+  "path": "/users/123/setup"
+}
+```
+
+**With Validation Errors:**
+
+```json
+{
+  "statusCode": 400,
+  "message": [
+    "email must be an email",
+    "password must be longer than 8 characters"
+  ],
+  "error": "Bad Request",
+  "timestamp": "2025-12-29T10:30:00.000Z",
+  "path": "/auth/register"
+}
+```
+
+---
+
+### HTTP Status Code Usage
+
+**Success (2xx):**
+
+- `200 OK` - Successful GET, PATCH, DELETE
+- `201 Created` - Successful POST (resource created)
+
+**Client Errors (4xx):**
+
+- `400 Bad Request` - Validation failed, malformed request
+- `401 Unauthorized` - Missing or invalid access token
+- `403 Forbidden` - Valid token, insufficient permissions
+- `404 Not Found` - Resource does not exist
+- `409 Conflict` - State conflict (e.g., already accepted contract)
+- `422 Unprocessable Entity` - Business rule violation
+
+**Server Errors (5xx):**
+
+- `500 Internal Server Error` - Unexpected server error
+
+---
+
+### Error Scenarios by Type
+
+**Authentication Errors (401):**
+
+- Missing Authorization header
+- Invalid JWT token
+- Expired access token (client should refresh)
+
+**Authorization Errors (403):**
+
+- User role insufficient (Player accessing Captain-only endpoint)
+- Resource ownership failed (accessing another user's data)
+- Setup incomplete (User accessing Player features)
+- Tier limit exceeded (Basic user creating 2nd squad)
+
+**Validation Errors (400):**
+
+- DTO validation failed (missing required fields)
+- Invalid data types
+- Invalid enum values
+
+**Business Rule Violations (422):**
+
+- Squad roster full (cannot send contract)
+- Player already registered (duplicate competition registration)
+- Contract already accepted (cannot accept again)
+- Insufficient balance (cannot break contract)
+
+**State Conflicts (409):**
+
+- Contract already accepted by another squad
+- Match already completed
+- Challenge already activated
+
+---
+
+## TRANSACTION PATTERNS
+
+### When to Use Database Transactions
+
+**Financial Operations (Always):**
+
+- Contract breaking (deduct from player, credit to squad)
+- Transfer fees (deduct from buyer, credit to seller)
+- Coin purchases (credit user, record transaction)
+- Prize distribution (deduct from pool, credit to winners)
+- Squad bank transfers (deduct from sender, credit to receiver)
+
+**State Changes with Multiple Updates (Always):**
+
+- Competition registration (update squad, create registration, update players)
+- Match result submission (update match, create participations, award XP)
+- Contract acceptance (update contract, update squad roster, remove from transfer pool)
+- Challenge completion (update challenge status, award XP, award coins)
+
+**Read-Only Operations (Never):**
+
+- Fetching user profile
+- Listing matches
+- Viewing leaderboards
+
+---
+
+### Transaction Pattern
+
+**Principle:** Wrap all related writes in single transaction to ensure atomicity.
+
+**Contract Break Transaction Pattern:**
+
+1. Start transaction
+2. Fetch contract and validate ownership
+3. Validate contract state (must be ACTIVE)
+4. Calculate break fee based on user tier
+5. Validate user has sufficient balance
+6. Deduct fee from user coin balance
+7. Credit fee to squad bank balance
+8. Record user coin transaction (deduction)
+9. Record squad bank transaction (credit)
+10. Update contract status to BROKEN
+11. Add player to transfer pool as Free Agent
+12. Commit transaction
+
+**Transfer Fee Payment Pattern:**
+
+1. Start transaction
+2. Validate transfer request status
+3. Calculate total cost (signing fee + registration fee)
+4. Validate buyer squad has sufficient balance
+5. Deduct from buyer squad bank
+6. Credit signing fee to seller squad bank (if Transfer Listed)
+7. Credit registration fee to platform
+8. Record squad bank transactions
+9. Update transfer request status to ACCEPTED
+10. Create contract for player
+11. Remove from transfer pool
+12. Commit transaction
+
+**Prize Distribution Pattern:**
+
+1. Start transaction
+2. Fetch competition prize distribution
+3. Calculate winners based on standings
+4. For each winner:
+   - Credit cash balance
+   - Record cash transaction
+5. Update competition status to COMPLETED
+6. Commit transaction
+
+**Key Points:**
+
+- All-or-nothing execution - if any step fails, entire transaction rolls back
+- Balance updates are atomic - prevents race conditions
+- Related state changes grouped together - maintains data consistency
+- Record audit trail within same transaction - no orphaned transactions
+
+---
+
+### Transaction Isolation
+
+**Default Isolation Level:** Read Committed (Prisma default)
+
+**When to Use Higher Isolation:**
+
+- Financial operations with concurrent access risk
+- Use Serializable isolation for critical balance updates
+- Rare in practice; Read Committed sufficient for most cases
+
+---
+
+## RELATED DOCUMENTATION
+
+- **db-schema.mdc** - Complete database schema with all tables and relationships
+- **api-requirements.mdc** - All 128 endpoints with RBAC permission matrix
+- **game-rules.mdc** - Business rules, validation logic, and constraints
+- **auth-strategy.mdc** - JWT tokens, OAuth flows, role progression
+- **tech-stack.mdc** - NestJS setup, Prisma configuration, infrastructure
+- **monetization.mdc** - Subscription tiers, coin economy, payment flows
+- **discord-integration.mdc** - Discord OAuth and Bot API integration
+
+---
+
+## CRITICAL NOTES
+
+**Module Boundaries:**
+
+- Modules communicate via dependency injection, never direct imports
+- Services can call other services within same module freely
+- Cross-module calls require injecting the target module's service
+- Keep module coupling loose - minimize cross-module dependencies
+
+**Resource Ownership:**
+
+- Each table is owned by exactly one module
+- Owning module has full CRUD control
+- Other modules read via service injection, never direct Prisma access
+
+**Guard Layering:**
+
+- JWT authentication is global (all endpoints except public)
+- Role checks happen at controller or route level
+- Business rule checks happen in service layer (throw exceptions)
+
+**Transaction Scope:**
+
+- Keep transactions as short as possible
+- Fetch data outside transaction, write inside transaction
+- Never make external API calls inside transactions (Discord, Removal.ai, etc.)
+
+**Error Handling:**
+
+- Services throw exceptions (HttpException, custom exceptions)
+- Controllers catch exceptions via global exception filter
+- Never return error objects from services (throw instead)
+
+**State Machines:**
+
+- Validate current state before transition
+- Use database constraints to enforce valid states
+- Log all state transitions for audit trail
